@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fetchFigmaTokens, flattenFrameNodes } from '../src/figma.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const exp = JSON.parse(fs.readFileSync(join(root, 'seed/figma-export.json'), 'utf8'));
+const exp = JSON.parse(fs.readFileSync(join(root, 'test/fixtures/figma-export.json'), 'utf8'));
 
 test('live pull hits styles -> nodes -> variables and normalizes tokens', async () => {
   const calls = [];

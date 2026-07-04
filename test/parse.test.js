@@ -13,8 +13,9 @@ import { diff } from '../src/diff.js';
 import { computeFixPlan, applyPlan, renderCanonical } from '../src/fixer.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(root, 'seed/figma-export.json'), 'utf8')));
-const jsx = fs.readFileSync(join(root, 'seed/PricingCard.jsx'), 'utf8');
+const FIX = join(root, 'test/fixtures');
+const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(FIX, 'figma-export.json'), 'utf8')));
+const jsx = fs.readFileSync(join(FIX, 'sample.jsx'), 'utf8');
 
 test('parseSource reads Tailwind arbitrary values, scale classes, and inline colors', () => {
   const u = parseSource('<div className="bg-[#ff6b35] p-6 text-[18px]" style={{color:"#fff"}} />', 'x.jsx');
@@ -51,9 +52,9 @@ test('config round-trips to disk', async () => {
   const tmp = join(os.tmpdir(), `driftrc-test-${process.pid}.json`);
   process.env.DRIFTRC = tmp;
   const mod = await import('../src/config.js');
-  mod.saveConfig({ ...mod.loadConfig(), scanMode: 'watch', exclude: ['seed/x.css'] });
+  mod.saveConfig({ ...mod.loadConfig(), scanMode: 'watch', exclude: ['vendor/x.css'] });
   const back = mod.loadConfig();
   assert.equal(back.scanMode, 'watch');
-  assert.deepEqual(back.exclude, ['seed/x.css']);
+  assert.deepEqual(back.exclude, ['vendor/x.css']);
   fs.rmSync(tmp, { force: true });
 });

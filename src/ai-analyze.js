@@ -5,6 +5,7 @@ import { parseSource } from './parse.js';
 import { diff, isRealDrift } from './diff.js';
 import { enrichOffline } from './claude.js';
 import { finalizeDrift, hasRequiredDriftFields } from './drift-format.js';
+import { formatDismissedForPrompt } from './dismiss.js';
 import { chatCompletion, resolveLlmConfig, DEFAULT_DEPLOYMENT } from './llm.js';
 
 export const MODEL = DEFAULT_DEPLOYMENT;
@@ -27,6 +28,7 @@ Do NOT include severity reasoning or "why high/medium/low" prose.
 Do NOT flag literals that exactly match expected.
 For color/spacing/typography drifts always set both expected and found.
 For off-palette/off-scale set expected null and explain in problem.
+If the user payload lists dismissed elements, never report those elements again (same or similar issue).
 
 Reply with ONLY JSON:
 {"drifts":[{...}]}`;
@@ -40,7 +42,7 @@ function parseJsonObject(text) {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-function buildUserPayload({ pageId, srcFile, src, html, tokens, tokenMode, figmaSummary }) {
+function buildUserPayload({ pageId, srcFile, src, html, tokens, tokenMode, figmaSummary, dismissedItems = [] }) {
   const tokenList = (tokens || []).slice(0, 80).map((t) => ({
     name: t.name, type: t.type, value: t.value, label: t.label || t.value, count: t.count,
   }));
@@ -56,6 +58,9 @@ function buildUserPayload({ pageId, srcFile, src, html, tokens, tokenMode, figma
   ];
   if (html) {
     parts.push(`\n--- PREVIEW HTML: ${pageId}.html ---`, html.slice(0, 12000));
+  }
+  if (dismissedItems.length) {
+    parts.push(formatDismissedForPrompt(dismissedItems));
   }
   parts.push('\nReturn all drifts for this page as JSON.');
   return parts.filter(Boolean).join('\n');
@@ -189,6 +194,7 @@ export async function analyzePageWithAI({
   apiKey,
   cfg,
   client,
+  dismissedItems = [],
 }) {
   const usages = parseSource(src, srcFile);
   const lines = src.split('\n');
@@ -203,7 +209,7 @@ export async function analyzePageWithAI({
   }
 
   const userContent = buildUserPayload({
-    pageId, srcFile, src, html, tokens: panelTokens, tokenMode, figmaSummary,
+    pageId, srcFile, src, html, tokens: panelTokens, tokenMode, figmaSummary, dismissedItems,
   });
 
   try {

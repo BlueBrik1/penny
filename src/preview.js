@@ -24,16 +24,7 @@ export function detectPreviewKind(src, srcFile, html = '') {
   if (ext === 'vue') return PREVIEW_KIND.VUE;
   if (ext === 'svelte') return PREVIEW_KIND.SVELTE;
 
-  if (ext === 'jsx' || ext === 'tsx') {
-    const usesTailwind = /@tailwind|tailwindcss|className=.*(?:-\[|\b(?:p|m|gap|text|bg|flex)-)/.test(src)
-      || TW_CLASS.test(src) || TW_ARB.test(src);
-    const usesReact = /import\s+.*\bfrom\s+['"]react['"]|export\s+(default\s+)?function/.test(src);
-    const interactiveReact = usesReact && /\buseState\b|\buseEffect\b|\bReact\./.test(src);
-    if (interactiveReact) return PREVIEW_KIND.REACT_JSX;
-    if (usesTailwind) return PREVIEW_KIND.TAILWIND_JSX;
-    if (usesReact) return PREVIEW_KIND.REACT_JSX;
-    return PREVIEW_KIND.TAILWIND_JSX;
-  }
+  if (ext === 'jsx' || ext === 'tsx') return PREVIEW_KIND.REACT_JSX;
 
   if (ext === 'css' || ext === 'scss' || ext === 'less') {
     return hasHtml ? PREVIEW_KIND.CSS_HTML : PREVIEW_KIND.CSS_ONLY;
@@ -116,6 +107,32 @@ export function buildPulseCss(selectors, tailwind = false) {
     ${mapped.join(',')}{animation:fixPulse 1.2s ease-out 2 !important;outline:3px solid #82d69a !important;outline-offset:3px !important;position:relative !important;z-index:200 !important;filter:brightness(1.15) !important;}`;
 }
 
+export function hasExternalImports(src) {
+  return /^import\s+.+from\s+['"]\.\.?\/[^'"]+['"]/m.test(src);
+}
+
+/** Resolve iframe target: embed dev server URL or render srcDoc via Babel/CSS. */
+export function resolvePreviewTarget({
+  src, srcFile, html = '', previewDevServer, previewProxyUrl, previewUrl, previewPath,
+}) {
+  const kind = detectPreviewKind(src, srcFile, html);
+  if (previewUrl) return { kind, previewUrl, mode: 'url' };
+  const ext = (srcFile.split('.').pop() || '').toLowerCase();
+  const isJsx = ext === 'jsx' || ext === 'tsx';
+  const devBase = previewProxyUrl || previewDevServer;
+  if (isJsx && devBase) {
+    const base = devBase.replace(/\/$/, '');
+    const route = previewPath || '/';
+    const pathPart = route.startsWith('/') ? route : `/${route}`;
+    const url = pathPart === '/' ? `${base}/` : `${base}${pathPart}`;
+    return { kind: PREVIEW_KIND.REACT_JSX, previewUrl: url, mode: 'url' };
+  }
+  if (isJsx && hasExternalImports(src)) {
+    return { kind: PREVIEW_KIND.REACT_JSX, previewUrl: null, mode: 'srcdoc', importWarning: true };
+  }
+  return { kind, previewUrl: null, mode: 'srcdoc' };
+}
+
 export function jsxToStaticHtml(src) {
   const start = src.indexOf('<'), end = src.lastIndexOf('>');
   if (start === -1 || end === -1) return '';
@@ -180,7 +197,23 @@ export function prepareReactForBabel(src) {
   });
   out = out.replace(/^import\s+.*?from\s+['"][^'"]+['"];?\s*$/gm, '');
   out = out.replace(/^export\s+default\s+/gm, '');
+  out = out.replace(/^export\s+(?=function|const|class)/gm, '');
   return `${hooks.join('\n')}\n${out}`.trim();
+}
+
+function buildImportWarningDocument(srcFile, extraCss) {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;padding:28px 32px;background:#f7f8fa;font-family:system-ui,sans-serif;color:#1a1a2e;line-height:1.55;max-width:520px}
+h2{font-size:18px;margin:0 0 12px} code{background:#e8eaef;padding:2px 6px;border-radius:4px;font-size:13px}
+ol{padding-left:20px} li{margin:8px 0}${extraCss}</style></head><body>
+<h2>Preview needs your dev server</h2>
+<p><code>${srcFile}</code> imports other local files. Penny renders standalone components in-isolation; multi-file React apps need your running dev server.</p>
+<ol>
+<li>Run <code>npm run dev</code> (or your usual start command)</li>
+<li>Add to <code>~/.driftrc</code>: <code>"previewDevServer": "http://localhost:5173"</code></li>
+<li>Optionally set <code>previewPath</code> per source (e.g. <code>"/pricing"</code>)</li>
+</ol>
+</body></html>`;
 }
 
 function buildReactDocument(src, spotSelectors, extraCss) {
@@ -189,16 +222,21 @@ function buildReactDocument(src, spotSelectors, extraCss) {
   const { css: spot, overlay } = spotlightCss(sel);
   const body = prepareReactForBabel(src).replace(/<\/script/gi, '<\\/script');
   return `<!doctype html><html><head><meta charset="utf-8">
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-<style>body{margin:0;padding:24px;background:#f7f8fa}${extraCss}${spot}</style></head>
+<style>body{margin:0;padding:0;background:#f7f8fa}${extraCss}${spot}</style></head>
 <body><div id="root"></div>${overlay}
 <script type="text/babel" data-presets="react">
 ${body}
 const __pennyRoot = ReactDOM.createRoot(document.getElementById('root'));
-__pennyRoot.render(React.createElement(typeof ${name} !== 'undefined' ? ${name} : () => React.createElement('p', null, 'Preview unavailable')));
+const __pennyComp = typeof ${name} !== 'undefined' ? ${name} : () => React.createElement('p', null, 'Preview unavailable');
+try { __pennyRoot.render(React.createElement(__pennyComp)); }
+catch (e) {
+  __pennyRoot.render(React.createElement('div', { style: { padding: 24, fontFamily: 'system-ui', color: '#c00' } },
+    React.createElement('strong', null, 'Preview error: '), e.message));
+}
 </script></body></html>`;
 }
 
@@ -213,19 +251,20 @@ export function buildPreviewDocument({
   previewKind = null,
   spotSelectors = [],
   extraCss = '',
+  previewImportWarning = false,
 }) {
+  if (previewImportWarning) return buildImportWarningDocument(srcFile, extraCss);
   const kind = previewKind || detectPreviewKind(src, srcFile, html);
   const spot = spotSelectors || [];
 
   switch (kind) {
     case PREVIEW_KIND.CSS_HTML:
-      return buildCssDocument(src, html, spot, extraCss);
+      return buildCssDocument(src, html?.trim() ? html : synthesizeHtmlFromCss(src), spot, extraCss);
     case PREVIEW_KIND.CSS_ONLY:
       return buildCssDocument(src, synthesizeHtmlFromCss(src), spot, extraCss);
     case PREVIEW_KIND.HTML:
       return buildCssDocument('', src, spot, extraCss);
     case PREVIEW_KIND.TAILWIND_JSX:
-      return buildTailwindDocument(jsxToStaticHtml(src), spot, extraCss);
     case PREVIEW_KIND.REACT_JSX:
       return buildReactDocument(src, spot, extraCss);
     case PREVIEW_KIND.VUE:

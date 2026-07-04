@@ -1,14 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { runLocalScan, formatScanLines } from '../src/scan.js';
-import { loadConfig } from '../src/config.js';
 
-test('runLocalScan returns drift counts for bundled demo', async () => {
-  const cfg = { ...loadConfig(), azureOpenAiKey: '', demoMode: true, dismissed: [] };
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('runLocalScan returns zero when no sources configured', async () => {
+  const cfg = {
+    projectRoot: ROOT,
+    sources: [],
+    azureOpenAiKey: 'test-key',
+    dismissed: [],
+    dismissedItems: [],
+  };
   const result = await runLocalScan(cfg, { dryRun: true });
-  assert.ok(result.total > 0);
-  assert.equal(result.demoMode, true);
-  assert.ok(result.pages.length >= 1);
+  assert.equal(result.total, 0);
+  assert.equal(result.aiLive, false);
   assert.ok(formatScanLines(result).some((l) => l.includes('drift')));
 });

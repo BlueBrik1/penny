@@ -12,8 +12,9 @@ import { diff } from '../src/diff.js';
 import { computeFixPlan, applyPlan, isFixable, hasApplicableEdits } from '../src/fixer.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(root, 'seed/figma-export.json'), 'utf8')));
-const css = fs.readFileSync(join(root, 'seed/deployed.css'), 'utf8');
+const FIX = join(root, 'test/fixtures');
+const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(FIX, 'figma-export.json'), 'utf8')));
+const css = fs.readFileSync(join(FIX, 'sample.css'), 'utf8');
 const drifts = diff(tokens, parseCss(css, 'deployed.css'));
 const plan = computeFixPlan(css, drifts);
 

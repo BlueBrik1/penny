@@ -5,10 +5,10 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
 import { parseSource } from './parse.js';
-import { computeFixPlan, applyPlan, hasApplicableEdits, driftKey } from './fixer.js';
+import { computeFixPlan, applyPlan, hasApplicableEdits } from './fixer.js';
+import { appendDismissItem, recordDismissItem } from './dismiss.js';
 import { loadConfig, saveConfig, resetScanState } from './config.js';
 import { analyzeAllPages } from './pipeline.js';
-import { isDemoMode } from './demo-mode.js';
 import {
   computeDriftScore, groupDrifts, planForDrift,
   webDeepLink, deepLinkCmd,
@@ -17,6 +17,7 @@ import { driftTypeLabel } from './drift-format.js';
 import {
   applySnapshotToTui, subscribeWebEvents, webPost, webHardScan,
 } from './web-client.js';
+import { normalizeSource, termSafe } from './tui-terminal.js';
 
 const C = { dim: '\x1b[2m', reset: '\x1b[0m', bold: '\x1b[1m', inv: '\x1b[7m', cyan: '\x1b[36m', red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', key: '\x1b[97m' };
 const SEVC = { high: '\x1b[38;5;203m', medium: '\x1b[38;5;215m', low: '\x1b[38;5;75m' };
@@ -41,23 +42,25 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 function visLen(s) { return strip(s).length; }
 
 function padVisible(s, w) {
-  const v = visLen(s);
-  if (v >= w) return clip(s, w);
-  return s + ' '.repeat(w - v);
+  const safe = termSafe(s);
+  const v = visLen(safe);
+  if (v >= w) return clip(safe, w);
+  return safe + ' '.repeat(w - v);
 }
 
 function clip(s, width) {
+  const safe = termSafe(s);
   let out = '', vis = 0, i = 0;
-  while (i < s.length && vis < width) {
-    if (s[i] === '\x1b') { const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i)); if (m) { out += m[0]; i += m[0].length; continue; } }
-    out += s[i]; vis++; i++;
+  while (i < safe.length && vis < width) {
+    if (safe[i] === '\x1b') { const m = /^\x1b\[[0-9;]*m/.exec(safe.slice(i)); if (m) { out += m[0]; i += m[0].length; continue; } }
+    out += safe[i]; vis++; i++;
   }
   return out + C.reset;
 }
 
 const wrap = (s, w) => {
   const out = []; let line = '';
-  for (const word of String(s).split(/\s+/)) {
+  for (const word of termSafe(String(s)).split(/\s+/)) {
     if ((line + ' ' + word).trim().length > w) { out.push(line.trim()); line = word; }
     else line += (line ? ' ' : '') + word;
   }
@@ -81,7 +84,7 @@ function tokenizeLine(line) {
 function ansiSyntax(text, maxLen) {
   if (maxLen <= 0) return '';
   let out = '', vis = 0;
-  for (const tk of tokenizeLine(String(text).replace(/\t/g, '  '))) {
+  for (const tk of tokenizeLine(termSafe(String(text)))) {
     if (vis >= maxLen) break;
     const piece = tk.t.slice(0, maxLen - vis);
     out += (SYN[tk.c] || SYN.plain) + piece + C.reset;
@@ -185,7 +188,7 @@ function driftContext(page, curDrift, pageDrifts) {
   const activeLines = new Set(curDrift ? curDrift.locations.map((l) => l.line) : []);
   const fixAfter = new Map();
   if (curDrift) {
-    for (const item of computeFixPlan(page.text, [curDrift])) {
+    for (const item of computeFixPlan(pageSource(page), [curDrift])) {
       for (const e of item.edits) fixAfter.set(e.line, e.after);
     }
   }
@@ -193,8 +196,31 @@ function driftContext(page, curDrift, pageDrifts) {
   return { lineSev, activeLines, fixAfter, focusLine };
 }
 
+function pageSource(page) {
+  if (page.path && fs.existsSync(page.path)) {
+    try {
+      const t = normalizeSource(fs.readFileSync(page.path, 'utf8'));
+      page.text = t;
+      page.src = t;
+      return t;
+    } catch { /* fall through */ }
+  }
+  if (page.text) return normalizeSource(page.text);
+  if (page.src) return normalizeSource(page.src);
+  return '';
+}
+
+function hydratePagesFromDisk(pageList) {
+  for (const p of pageList) pageSource(p);
+}
+
+/** Join two fixed-width columns on one terminal row (no cursor positioning — works on Windows). */
+function joinColumns(left, right, leftW, rightW) {
+  return `${padVisible(left, leftW)}${C.dim}|${C.reset} ${padVisible(right, rightW)}`;
+}
+
 function buildCodeView(page, curDrift, pageDrifts, width, height, scrollTop, overrides = {}) {
-  const src = page.text.split('\n');
+  const src = pageSource(page).split('\n');
   const total = src.length;
   const codeRows = Math.max(1, height - 1);
   const { lineSev, activeLines, fixAfter, focusLine } = driftContext(page, curDrift, pageDrifts);
@@ -214,8 +240,9 @@ function buildCodeView(page, curDrift, pageDrifts, width, height, scrollTop, ove
     const isActive = activeLines.has(lineNo);
     let after = fixAfter.get(lineNo);
     if (overrides[lineNo] != null) after = overrides[lineNo];
+    const showDiff = isActive && after != null && lineNo === focusLine;
 
-    if (isActive && after != null) {
+    if (showDiff) {
       rows.push(padVisible(`${DEL}${num} - ${ansiSyntax(raw, bodyW)}${C.reset}`, width));
       if (rows.length < codeRows) {
         rows.push(padVisible(`${ADD}     + ${ansiSyntax(after, bodyW)}${C.reset}`, width));
@@ -229,6 +256,8 @@ function buildCodeView(page, curDrift, pageDrifts, width, height, scrollTop, ove
     }
     lineNo++;
   }
+
+  if (rows.length > codeRows) rows.length = codeRows;
 
   while (rows.length < codeRows) rows.push(' '.repeat(width));
 
@@ -278,7 +307,6 @@ export async function runTui({
   tokenMode: initialTokenMode = 'intrinsic',
   agent = 'your agent',
   apiKey = null,
-  demoMode = false,
   webSync = null,
 }) {
   const cfg = loadConfig();
@@ -309,7 +337,14 @@ export async function runTui({
   let history = [];
   let historyId = 0;
   let tokenScroll = null;
+  let leftScroll = 0;
+  let leftMeta = { maxTop: 0 };
+  let tabScroll = 0;
   let unsubWeb = null;
+  let pendingSnap = null;
+  let renderQueued = false;
+
+  hydratePagesFromDisk(pages);
 
   function mergeSnapshot(snap) {
     const next = applySnapshotToTui(snap, webSync?.sources || pages, { pages, problems, curPage, idx });
@@ -320,13 +355,25 @@ export async function runTui({
     curPage = next.curPage;
     idx = next.idx;
     lastDriftCount = problems.length;
+    hydratePagesFromDisk(pages);
+  }
+
+  function queueRender(snap) {
+    if (snap) pendingSnap = snap;
+    if (renderQueued) return;
+    renderQueued = true;
+    setImmediate(() => {
+      renderQueued = false;
+      if (pendingSnap) {
+        mergeSnapshot(pendingSnap);
+        pendingSnap = null;
+      }
+      render();
+    });
   }
 
   if (webSync) {
-    unsubWeb = subscribeWebEvents(webSync.port, (snap) => {
-      mergeSnapshot(snap);
-      render();
-    });
+    unsubWeb = subscribeWebEvents(webSync.port, (snap) => queueRender(snap));
   }
 
   const pushHist = (action, detail) => {
@@ -342,13 +389,12 @@ export async function runTui({
 
   const modeLabel = webSync
     ? 'web sync'
-    : demoMode || isDemoMode(cfg)
-      ? 'demo snapshot'
-      : (apiKey || cfg.azureOpenAiKey) ? 'AI live' : tokenMode === 'figma' ? 'figma baseline' : 'code scan';
+    : (apiKey || cfg.azureOpenAiKey) ? 'AI live' : tokenMode === 'figma' ? 'figma baseline' : 'code scan';
 
   const COLS = () => process.stdout.columns || 100;
+  const ROWS = () => process.stdout.rows || 30;
   const pageAt = () => pages[Math.min(curPage, pages.length - 1)];
-  const listFor = (pg) => problems.filter((pp) => pp.page === pg);
+  const listFor = (pg) => problems.filter((pp) => pp.page.id === pg.id);
 
   function itemsForPage(pg) {
     let items = listFor(pg);
@@ -371,69 +417,134 @@ export async function runTui({
     return [`${C.dim}map${C.reset}  ${items.length} markers on page`];
   }
 
-  function resetCodeScroll() { codeScroll = null; tokenScroll = null; }
+  function resetCodeScroll() { codeScroll = null; tokenScroll = null; leftScroll = 0; }
 
   function printDeepLink(pg, i) {
     return `${C.dim}link${C.reset}  ${deepLinkCmd({ pageId: pg.id, driftIdx: i })}  ·  ${webDeepLink({ pageId: pg.id, driftIdx: i })}`;
   }
 
+  function buildLeftContent(pg, P, d, leftW) {
+    const L = [];
+    if (!P) {
+      L.push(`${C.green}No inconsistencies found in this file${C.reset}`, '', `${C.dim}${pg.file}${C.reset}`);
+      return L;
+    }
+    const items = itemsForPage(pg);
+    const N = items.length;
+    const groupLbl = P.group ? ` · group ${P.group.label} (${P.group.ids.length})` : '';
+    L.push(`${C.bold}Problem ${idx + 1} / ${N}${groupLbl}${C.reset}`);
+    L.push(`${SEVC[d.severity]}${C.bold}${d.severity.toUpperCase()}${C.reset} · ${d.category}`);
+    L.push(`${C.dim}${d.type}${d.token ? ' · ' + d.token.name : ''}${C.reset}`, '');
+    L.push(...renderComparison(d));
+    if (d.problem || d.why) L.push(...labeledBlock('problem', d.problem || d.why, leftW));
+    if (d.solution || d.fix) L.push(...labeledBlock('solution', d.solution || d.fix, leftW));
+    if (d.elementName) L.push(...labeledBlock('element', d.elementName, leftW));
+    L.push('');
+    L.push(printDeepLink(pg, idx));
+    if (history.length) L.push(`${C.dim}hist${C.reset}  ${history[0].action} · ${history[0].pageName || pg.file}`);
+    L.push(...renderHeatmapSummary(pg));
+    return L;
+  }
+
+  function slicePanel(lines, height, scrollTop) {
+    const maxTop = Math.max(0, lines.length - height);
+    const top = Math.min(Math.max(0, scrollTop ?? 0), maxTop);
+    const rows = [];
+    for (let i = 0; i < height; i++) rows.push(lines[top + i] || '');
+    return { rows, scrollTop: top, maxTop, total: lines.length };
+  }
+
+  /** Keep curPage tab visible; return [start, end) index into pages. */
+  function tabWindow(cols) {
+    const counter = pages.length > 1 ? 8 : 0;
+    const budget = Math.max(20, cols - counter);
+    if (!pages.length) return { start: 0, end: 0, moreBefore: false, moreAfter: false };
+
+    const tabWidth = (from, to) => {
+      let w = 0;
+      for (let i = from; i < to; i++) w += ` ${pages[i].name} ${listFor(pages[i]).length} `.length;
+      return w;
+    };
+
+    const expandEnd = (start) => {
+      let end = Math.min(start + 1, pages.length);
+      while (end < pages.length && (end - start <= 1 || tabWidth(start, end + 1) <= budget)) end++;
+      return end;
+    };
+
+    let start = Math.max(0, Math.min(tabScroll, pages.length - 1));
+    let end = expandEnd(start);
+
+    if (curPage < start) {
+      start = curPage;
+      end = expandEnd(start);
+    } else if (curPage >= end) {
+      start = curPage;
+      end = expandEnd(start);
+      while (start > 0 && tabWidth(start - 1, end) <= budget) start--;
+    }
+
+    tabScroll = start;
+    return { start, end, moreBefore: start > 0, moreAfter: end < pages.length };
+  }
+
+  function buildTabLine(cols) {
+    const { start, end, moreBefore, moreAfter } = tabWindow(cols);
+    let out = '';
+    if (moreBefore) out += `${C.dim}◀ ${C.reset}`;
+    for (let i = start; i < end; i++) {
+      const lbl = ` ${pages[i].name} ${listFor(pages[i]).length} `;
+      out += i === curPage ? `${C.inv}${lbl}${C.reset}` : `${C.dim}${lbl}${C.reset}`;
+    }
+    if (moreAfter) out += `${C.dim} ▶${C.reset}`;
+    if (pages.length > 1) {
+      out += ` ${C.dim}(${curPage + 1}/${pages.length})${C.reset}`;
+    }
+    return out;
+  }
+
   function render() {
-    const cols = COLS(), leftW = Math.min(46, Math.floor(cols * 0.44)), rightW = Math.max(20, cols - leftW - 4);
+    const cols = COLS();
+    const leftW = Math.min(40, Math.max(28, Math.floor(cols * 0.4)));
+    const rightW = Math.max(20, cols - leftW - 2);
+    viewH = Math.max(8, ROWS() - 7);
     const pg = pageAt();
     const items = itemsForPage(pg);
     const N = items.length;
     if (idx >= N) idx = Math.max(0, N - 1);
     const P = N ? items[idx] : null;
     const d = P?.drift;
-    let L = [], R = [];
+
+    let leftLines = [];
+    let rightLines = [];
 
     if (showHelp) {
-      L = [`${C.bold}Shortcuts${C.reset}`, 'h close', 't tokens', 'g group', 'm map', '/ search', ...(webSync ? ['r rescan'] : []), ...(!demoMode && !isDemoMode(cfg) ? ['H hard rescan'] : [])];
-      R = [`${C.bold}More${C.reset}`, '↑↓ cycle', '←→ page', 'pgup/down scroll', 'a apply-all', 'c agent', 'x dismiss', 'e edit line', 'esc quit'];
-      viewH = Math.max(8, (process.stdout.rows || 30) - 6);
-      while (L.length < viewH) L.push('');
-      while (R.length < viewH) R.push('');
-    } else if (!P) {
-      L = [`${C.green}No problems on this page.${C.reset}`, '', `${C.dim}${pg.file} looks consistent.${C.reset}`];
+      leftLines = [`${C.bold}Shortcuts${C.reset}`, 'h close', 't tokens', 'g group', 'm map', '/ search', ...(webSync ? ['r rescan'] : []), '= hard rescan', '[ ] tab scroll', '{ } left scroll'];
+      rightLines = [`${C.bold}More${C.reset}`, '↑↓ cycle', '←→ page', 'pgup/down scroll', 'a apply-all', 'c agent', 'x dismiss', 'esc quit'];
+    } else if (view === 'menu' && d) {
+      leftLines = buildLeftContent(pg, P, d, leftW);
+      const groupN = P.group?.ids?.length ?? 1;
+      const curPlan = planForDrift(pageSource(pg), d);
+      const canApply = hasApplicableEdits(curPlan);
+      const pagePlan = computeFixPlan(pageSource(pg), listFor(pg).map((x) => x.drift));
+      const groupApplicable = P.group?.ids?.filter((id) => hasApplicableEdits(pagePlan.find((p) => p.id === id))).length ?? 0;
+      const applyAllN = pagePlan.filter(hasApplicableEdits).length;
+      const menuItems = [
+        { label: `Apply this solution${canApply ? '' : ' (advisory)'}`, enabled: canApply },
+        groupN > 1 ? { label: `Fix group (${groupApplicable || groupN})`, enabled: groupApplicable > 0 } : null,
+        { label: `Apply all fixes on ${pg.file} (${applyAllN})`, enabled: applyAllN > 0 },
+        { label: `Ask ${agent} (copy prompt)`, enabled: true },
+      ].filter(Boolean);
+      rightLines = ['', `${C.bold}Fix mode${C.reset}`, ''];
+      menuItems.forEach((it, i) => {
+        const text = it.enabled ? it.label : `${C.dim}${it.label}${C.reset}`;
+        rightLines.push(i === menu ? `${C.inv} ${text} ${C.reset}` : `   ${text}`);
+      });
+      rightLines.push('', shortcutHint([['up/down', 'move'], ['enter', 'select'], ['esc', 'back']]));
     } else {
-      const groupLbl = P.group ? ` · group ${P.group.label} (${P.group.ids.length})` : '';
-      L.push(`${C.bold}Problem ${idx + 1} / ${N}${groupLbl}${C.reset}`);
-      L.push(`${SEVC[d.severity]}${C.bold}${d.severity.toUpperCase()}${C.reset} · ${d.category}`);
-      L.push(`${C.dim}${d.type}${d.token ? ' · ' + d.token.name : ''}${C.reset}`);
-      L.push('');
-      L.push(...renderComparison(d));
-      if (d.problem || d.why) L.push(...labeledBlock('problem', d.problem || d.why, leftW));
-      if (d.solution || d.fix) L.push(...labeledBlock('solution', d.solution || d.fix, leftW));
-      if (d.elementName) L.push(...labeledBlock('element', d.elementName, leftW));
-      L.push('');
-      L.push(printDeepLink(pg, idx));
-      if (history.length) L.push(`${C.dim}hist${C.reset}  ${history[0].action} · ${history[0].pageName || pg.file}`);
-    }
-
-    if (!showHelp) {
-      L.push(...renderHeatmapSummary(pg));
-      viewH = Math.max(8, (process.stdout.rows || 30) - 6);
-
-      if (view === 'menu' && d) {
-        const groupN = P.group?.ids?.length ?? 1;
-        const curPlan = planForDrift(pg.text, d);
-        const canApply = hasApplicableEdits(curPlan);
-        const pagePlan = computeFixPlan(pg.text, listFor(pg).map((x) => x.drift));
-        const groupApplicable = P.group?.ids?.filter((id) => hasApplicableEdits(pagePlan.find((p) => p.id === id))).length ?? 0;
-        const applyAllN = pagePlan.filter(hasApplicableEdits).length;
-        const menuItems = [
-          { label: `Apply this solution${canApply ? '' : ' (advisory)'}`, enabled: canApply },
-          groupN > 1 ? { label: `Fix group (${groupApplicable || groupN})`, enabled: groupApplicable > 0 } : null,
-          { label: `Apply all fixes on ${pg.file} (${applyAllN})`, enabled: applyAllN > 0 },
-          { label: `Ask ${agent} (copy prompt)`, enabled: true },
-        ].filter(Boolean);
-        R = ['', `${C.bold}Fix mode${C.reset}`, ''];
-        menuItems.forEach((it, i) => {
-          const text = it.enabled ? it.label : `${C.dim}${it.label}${C.reset}`;
-          R.push(i === menu ? `${C.inv} ${text} ${C.reset}` : `   ${text}`);
-        });
-        R.push('', shortcutHint([['up/down', 'move'], ['enter', 'select'], ['esc', 'back']]));
-        while (R.length < viewH) R.push('');
+      leftLines = buildLeftContent(pg, P, d, leftW);
+      if (N === 0) {
+        rightLines = [`${C.dim}No inconsistencies found in this file${C.reset}`];
       } else {
         const pageDrifts = listFor(pg).map((x) => x.drift);
         const pane = showTokens
@@ -441,37 +552,36 @@ export async function runTui({
           : buildCodeView(pg, d ?? null, pageDrifts, rightW, viewH, codeScroll, inlineOverrides);
         scrollMeta = pane;
         if (showTokens) tokenScroll = pane.scrollTop;
-        R = pane.rows;
+        else codeScroll = pane.scrollTop;
+        rightLines = pane.rows;
       }
     }
 
+    const leftPane = slicePanel(leftLines, viewH, leftScroll);
+    leftScroll = leftPane.scrollTop;
+    leftMeta = leftPane;
+    while (rightLines.length < viewH) rightLines.push('');
+    rightLines.length = viewH;
+
     const sev = countSev(problems);
     const score = scoreInfo();
-    let tabs = '', used = 0;
-    for (let i = 0; i < pages.length; i++) {
-      const lbl = ` ${pages[i].name} ${listFor(pages[i]).length} `;
-      if (used + lbl.length > cols - 1) break;
-      tabs += i === curPage ? `${C.inv}${lbl}${C.reset}` : `${C.dim}${lbl}${C.reset}`;
-      used += lbl.length;
-    }
+    const tabs = buildTabLine(cols);
 
-    const rows = viewH;
-    const W = cols;
     let buf = `\x1b[2J\x1b[H`;
-    buf += clip(`${C.cyan}${C.bold}Penny${C.reset} ${C.dim}· ${problems.length} drifts · ${score.score}% aligned · ${sev.high}h ${sev.medium}m ${sev.low}l · ${modeLabel}${C.reset}`, W - 1) + '\n';
-    buf += clip(tabs, W - 1) + '\n\n';
+    buf += clip(`${C.cyan}${C.bold}Penny${C.reset} ${C.dim}· ${problems.length} drifts · ${score.score}% aligned · ${sev.high}h ${sev.medium}m ${sev.low}l · ${modeLabel}${C.reset}`, cols) + '\x1b[K\n';
+    buf += clip(tabs, cols) + '\x1b[K\n\n';
 
-    for (let i = 0; i < rows; i++) {
-      const left = padVisible(L[i] || '', leftW);
-      const right = padVisible(R[i] || '', rightW);
-      buf += padVisible(`${left} ${C.dim}|${C.reset} ${right}`, W - 1) + '\n';
+    const bodyStart = 4;
+    for (let i = 0; i < viewH; i++) {
+      buf += clip(joinColumns(leftPane.rows[i] || '', rightLines[i] || '', leftW, rightW), cols) + '\x1b[K\n';
     }
 
     const shortcuts = showHelp ? shortcutHint([['h', 'close help']]) : view === 'menu' ? '' : shortcutHint([
-      ['up/down', 'cycle'], ['left/right', 'page'], ['pgup/down', 'scroll'], ['enter', 'fix menu'],
-      ['t', 'tokens'], ['g', 'group'], ...(webSync ? [['r', 'rescan']] : []), ...(!demoMode && !isDemoMode(cfg) ? [['H', 'hard rescan']] : []), ['h', 'help'], ['esc', 'quit'],
+      ['up/down', 'cycle'], ['←→', 'page'], ['[ ]', 'tabs'], ['{ }', 'left'], ['pgup/dn', 'code'], ['enter', 'fix'],
+      ['t', 'tokens'], ['g', 'group'], ...(webSync ? [['r', 'rescan']] : []), [['=', 'hard rescan']], ['h', 'help'], ['esc', 'quit'],
     ]);
-    buf += clip(`${note ? C.green + note + C.reset + '  ' : ''}${shortcuts}`, W - 1);
+    buf += `\x1b[${bodyStart + viewH};1H`;
+    buf += clip(`${note ? C.green + note + C.reset + '  ' : ''}${shortcuts}`, cols) + '\x1b[K';
     process.stdout.write(buf);
   }
 
@@ -493,15 +603,17 @@ export async function runTui({
       inlineOverrides = {};
       return;
     }
-    let plan = computeFixPlan(page.text, problems.filter((p) => p.page === page).map((p) => p.drift));
+    let plan = computeFixPlan(pageSource(page), problems.filter((p) => p.page.id === page.id).map((p) => p.drift));
     if (Object.keys(overrides).length) {
       plan = plan.map((item) => ({
         ...item,
         edits: item.edits.map((e) => (overrides[e.line] != null ? { ...e, override: overrides[e.line], after: overrides[e.line] } : e)),
       }));
     }
-    page.text = applyPlan(page.text, plan, ids);
-    fs.writeFileSync(page.path, page.text);
+    const src = applyPlan(pageSource(page), plan, ids);
+    page.text = src;
+    page.src = src;
+    fs.writeFileSync(page.path, src);
     note = 'Rescanning…';
     resetCodeScroll();
     inlineOverrides = {};
@@ -549,6 +661,17 @@ export async function runTui({
     else codeScroll = next;
   }
 
+  function scrollLeft(delta) {
+    if (leftMeta.maxTop <= 0) return;
+    const step = Math.max(1, Math.floor(viewH * 0.75));
+    leftScroll = Math.min(leftMeta.maxTop, Math.max(0, leftScroll + delta * step));
+  }
+
+  function scrollTabs(delta) {
+    if (pages.length <= 1) return;
+    tabScroll = Math.max(0, Math.min(pages.length - 1, tabScroll + delta));
+  }
+
   return new Promise((resolve) => {
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -586,6 +709,10 @@ export async function runTui({
         else if (key.name === 'down') { if (items.length) idx = (idx + 1) % items.length; resetCodeScroll(); }
         else if (key.name === 'left') { curPage = (curPage - 1 + pages.length) % pages.length; idx = 0; resetCodeScroll(); }
         else if (key.name === 'right') { curPage = (curPage + 1) % pages.length; idx = 0; resetCodeScroll(); }
+        else if (ch === '[' || key.name === '[') scrollTabs(-1);
+        else if (ch === ']' || key.name === ']') scrollTabs(1);
+        else if (ch === '{' || key.name === '{') scrollLeft(-1);
+        else if (ch === '}' || key.name === '}') scrollLeft(1);
         else if (isPageUp) scrollPage(-1);
         else if (isPageDown) scrollPage(1);
         else if (key.name === 't') { showTokens = !showTokens; resetCodeScroll(); }
@@ -601,7 +728,7 @@ export async function runTui({
           } catch (e) { note = `Rescan failed: ${e.message}`; }
           resetCodeScroll();
         }
-        else if ((ch === 'H' || (key.shift && key.name === 'h')) && !demoMode && !isDemoMode(cfg)) {
+        else if (ch === '=') {
           await hardRescanAll();
         }
         else if (key.name === 'return' && P) { view = 'menu'; menu = 0; }
@@ -622,8 +749,8 @@ export async function runTui({
               note = 'Dismissed.';
             } catch (e) { note = `Dismiss failed: ${e.message}`; }
           } else {
-            const c = loadConfig(); const set = new Set(c.dismissed || []); set.add(driftKey(P.drift));
-            saveConfig({ ...c, dismissed: [...set] });
+            const c = loadConfig();
+            saveConfig({ ...c, dismissedItems: appendDismissItem(c, recordDismissItem(pg.id, P.drift)) });
             problems = await scan(pages, cfg);
             pushHist('dismiss', { pageName: pg.file });
             note = 'Dismissed.';
@@ -640,9 +767,9 @@ export async function runTui({
         else if (key.name === 'down') menu = (menu + 1) % menuCount;
         else if (key.name === 'return' && P) {
           const hasGroup = P.group?.ids?.length > 1;
-          const pagePlan = computeFixPlan(P.page.text, listFor(P.page).map((x) => x.drift));
+          const pagePlan = computeFixPlan(pageSource(P.page), listFor(P.page).map((x) => x.drift));
           if (menu === 0) {
-            if (hasApplicableEdits(planForDrift(P.page.text, P.drift))) await applyIds(P.page, [P.drift.id], inlineOverrides);
+            if (hasApplicableEdits(planForDrift(pageSource(P.page), P.drift))) await applyIds(P.page, [P.drift.id], inlineOverrides);
             else note = 'No line-level fix for this drift.';
           } else if (hasGroup && menu === 1) {
             const ids = P.group.ids.filter((id) => hasApplicableEdits(pagePlan.find((p) => p.id === id)));

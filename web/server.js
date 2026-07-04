@@ -3,8 +3,7 @@
 // fixer) and holds the single source of truth in memory. Serves the static page + a small
 // JSON API + a Server-Sent-Events stream so all three panels hot-reload live. Stdlib http.
 //
-// Sources & preferences come from ~/.driftrc (see src/config.js). With no config it falls
-// back to the bundled seed pages so the offline demo still works out of the box.
+// Sources & preferences come from ~/.driftrc (see src/config.js).
 //   scanMode: 'watch'   -> fs.watch each source, rescan + push on save
 //   scanMode: 'interval'-> rescan every intervalMinutes, push
 //   scanMode: 'ondemand'-> only rescans on POST /api/scan or /api/fix
@@ -19,14 +18,17 @@ import { fileURLToPath } from 'node:url';
 import { parseFigmaExport, fetchFigmaTokens, fetchFigmaFrame } from '../src/figma.js';
 import { parseSource } from '../src/parse.js';
 import { analyzeUsages } from '../src/intrinsic.js';
-import { computeFixPlan, applyPlan, driftKey } from '../src/fixer.js';
+import { computeFixPlan, applyPlan } from '../src/fixer.js';
+import { appendDismissItem, dismissedCount, recordDismissItem } from '../src/dismiss.js';
 import { loadConfig, updateConfig, configExists, ensureProjectSources } from '../src/config.js';
 import { computeDriftScore, deepLinkCmd, webDeepLink } from '../src/interactive.js';
-import { analyzePage, resolveSourceDefs, isDemoMode, resolveApiKey } from '../src/pipeline.js';
-import { detectPreviewKind, companionHtmlPath, langFromPreviewKind } from '../src/preview.js';
+import { analyzePage, resolveSourceDefs, resolveApiKey } from '../src/pipeline.js';
+import { detectPreviewKind, companionHtmlPath, langFromPreviewKind, resolvePreviewTarget } from '../src/preview.js';
 import { resolveSourcePath, PACKAGE_ROOT, projectRoot } from '../src/project-paths.js';
 import { chatCompletion, resolveLlmConfig } from '../src/llm.js';
 import { freePort } from '../src/free-port.js';
+import { startPreviewSidecar } from '../src/preview-sidecar.js';
+import { readBootCache, writeBootCache, hydratePagesFromCache, clearBootCache } from '../src/boot-cache.js';
 
 const ROOT = PACKAGE_ROOT;
 const WEB = path.join(ROOT, 'web');
@@ -45,7 +47,6 @@ const PORT = Number(process.env.PORT) || 5178;
 const cfg = loadConfig();
 const CFG = {
   export: process.env.FIGMA_EXPORT || '',
-  frame: process.env.FRAME || 'seed/frame.json',
   fileKey: cfg.figmaFileKey || process.env.FIGMA_FILE_KEY,
   figmaToken: cfg.figmaToken || process.env.FIGMA_TOKEN,
   frameNode: cfg.figmaFrameNode || process.env.FIGMA_FRAME_NODE,
@@ -61,8 +62,7 @@ const state = {
   frame: null,
   pages: [],
   live: { figma: false, claude: false },
-  demoMode: isDemoMode(cfg),
-  aiLive: !isDemoMode(cfg) && !!resolveApiKey(cfg),
+  aiLive: !!resolveApiKey(cfg),
   scanMode: cfg.scanMode,
   intervalMinutes: cfg.intervalMinutes,
   lastDriftCount: null,
@@ -73,13 +73,15 @@ const state = {
     historyId: 0,
   },
   pagesConfigKey: '',
+  previewProxyUrl: null,
+  ready: false,
+  bootError: null,
 };
 
 function refreshRuntimeConfig() {
   const cur = loadConfig();
   CFG.apiKey = resolveApiKey(cur);
-  state.demoMode = isDemoMode(cur);
-  state.aiLive = !state.demoMode && !!CFG.apiKey;
+  state.aiLive = !!CFG.apiKey;
   state.scanMode = cur.scanMode;
   state.intervalMinutes = cur.intervalMinutes;
   return cur;
@@ -88,7 +90,7 @@ function refreshRuntimeConfig() {
 function pagesConfigKey() {
   const cur = refreshRuntimeConfig();
   const { kept } = sourceDefs();
-  return `${projectRoot(cur)}|${state.demoMode}|${kept.map((d) => `${d.id}:${d.src}:${d.html || ''}`).join('|')}`;
+  return `${projectRoot(cur)}|${kept.map((d) => `${d.id}:${d.src}:${d.html || ''}`).join('|')}`;
 }
 
 async function syncPagesFromConfig() {
@@ -113,14 +115,9 @@ async function loadFigmaOptional() {
       state.frame = { image: f.imageUrl, embedUrl: figmaEmbed(url), frame: f.frame, nodes: f.nodes };
       return;
     }
-  } else if (CFG.export && fs.existsSync(path.join(ROOT, CFG.export))) {
-    state.figmaBaseline = parseFigmaExport(JSON.parse(fs.readFileSync(path.join(ROOT, CFG.export), 'utf8')));
-  }
-  if (!state.frame && fs.existsSync(path.join(ROOT, CFG.frame))) {
-    const frame = JSON.parse(fs.readFileSync(path.join(ROOT, CFG.frame), 'utf8'));
-    frame.image = '/seed/' + path.basename(frame.image);
-    frame.embedUrl = CFG.figmaUrl ? figmaEmbed(CFG.figmaUrl) : null;
-    state.frame = frame;
+  } else if (CFG.export && fs.existsSync(path.isAbsolute(CFG.export) ? CFG.export : path.join(ROOT, CFG.export))) {
+    const exportPath = path.isAbsolute(CFG.export) ? CFG.export : path.join(ROOT, CFG.export);
+    state.figmaBaseline = parseFigmaExport(JSON.parse(fs.readFileSync(exportPath, 'utf8')));
   }
 }
 
@@ -132,12 +129,10 @@ function refreshAnalysis() {
   state.tokenMode = analysis.mode;
 }
 
-// Resolve the list of sources to scan: config.sources if set, else the bundled seed pages.
-// Excluded paths (config.exclude, substring match) are dropped before scanning.
+// Resolve configured sources; excluded paths (substring match) are dropped before scanning.
 function sourceDefs() {
   const cur = loadConfig();
-  state.demoMode = isDemoMode(cur);
-  state.aiLive = !state.demoMode && !!resolveApiKey(cur);
+  state.aiLive = !!resolveApiKey(cur);
   let defs = resolveSourceDefs(cur);
   const excl = cur.exclude || [];
   return { all: defs, excluded: excl, kept: defs.filter((d) => !excl.some((x) => x && d.src.includes(x))) };
@@ -145,7 +140,6 @@ function sourceDefs() {
 
 async function recomputePage(page) {
   const cur = loadConfig();
-  const dismissed = new Set(cur.dismissed || []);
   page.drifts = await analyzePage({
     page,
     diffTokens: state.diffTokens,
@@ -153,7 +147,6 @@ async function recomputePage(page) {
     tokenMode: state.tokenMode,
     apiKey: CFG.apiKey,
     figmaSummary: state.figmaBaseline ? `${state.figmaBaseline.length} Figma tokens` : null,
-    dismissed,
     cfg: cur,
   });
   state.live.claude = state.aiLive;
@@ -168,7 +161,7 @@ async function loadPages(fresh = false) {
     const readPath = resolveSourcePath(cur, def.src);
     const srcFile = path.basename(readPath);
     const original = fs.readFileSync(readPath, 'utf8');
-    const writePath = def.seed ? path.join(WEB, `working_${def.id}.${srcFile.split('.').pop()}`) : readPath;
+    const writePath = readPath;
     const prev = prevById.get(def.id);
     const src = fresh ? original : (prev && prev.readPath === readPath ? prev.src : original);
     let htmlPath = def.html ? resolveSourcePath(cur, def.html) : null;
@@ -177,41 +170,56 @@ async function loadPages(fresh = false) {
       if (guess && fs.existsSync(guess)) htmlPath = guess;
     }
     const html = htmlPath && fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : '';
-    const previewKind = detectPreviewKind(src, srcFile, html);
+    const preview = resolvePreviewTarget({
+      src, srcFile, html,
+      previewDevServer: cur.previewDevServer,
+      previewProxyUrl: state.previewProxyUrl,
+      previewUrl: def.previewUrl,
+      previewPath: def.previewPath,
+    });
     const page = {
-      id: def.id, name: def.name, srcFile, lang: langFromPreviewKind(previewKind), previewKind,
-      readPath, writePath, seed: def.seed, original, src, html, htmlPath, drifts: [],
+      id: def.id, name: def.name, srcFile, lang: langFromPreviewKind(preview.kind), previewKind: preview.kind,
+      previewUrl: preview.previewUrl, previewImportWarning: !!preview.importWarning,
+      readPath, writePath, original, src, html, htmlPath, drifts: [],
     };
-    if (def.seed) fs.writeFileSync(writePath, src);
     state.pages.push(page);
   }
-  if (state.demoMode) {
-    const { loadDemoSnapshot, demoTokens, demoTokenMode } = await import('../src/demo-mode.js');
-    const snap = loadDemoSnapshot();
-    if (snap) {
-      state.tokens = demoTokens(snap);
-      state.diffTokens = snap.diffTokens || snap.tokens;
-      state.tokenMode = demoTokenMode(snap);
+  if (!fresh) {
+    const cached = readBootCache(cur);
+    if (cached && hydratePagesFromCache(cur, state.pages, cached)) {
+      state.tokens = cached.tokens;
+      state.diffTokens = cached.diffTokens;
+      state.tokenMode = cached.tokenMode;
+      state.pagesConfigKey = pagesConfigKey();
+      state.live.claude = state.aiLive;
+      console.log('  Synced scan from cache (instant boot).');
+      return;
     }
-  } else {
-    refreshAnalysis();
   }
+  refreshAnalysis();
   for (const page of state.pages) {
     await recomputePage(page);
     if (state.scanMode === 'autonomous' && autoFix(page)) await recomputePage(page);
   }
   state.pagesConfigKey = pagesConfigKey();
+  writeBootCache(cur, {
+      tokens: state.tokens,
+      diffTokens: state.diffTokens,
+      tokenMode: state.tokenMode,
+      pages: state.pages,
+  });
 }
 
 /** Wipe dismissals + session memory and rerun full AI analysis from disk. */
 async function hardRescan() {
-  updateConfig({ dismissed: [], lastScanDriftCount: null });
+  clearBootCache();
+  updateConfig({ dismissed: [], dismissedItems: [], lastScanDriftCount: null });
   state.session.history = [];
   state.session.focus = { pageId: null, driftIdx: 0 };
   state.scanNudge = null;
   state.lastDriftCount = null;
   refreshRuntimeConfig();
-  if (!state.demoMode) await loadFigmaOptional();
+  await loadFigmaOptional();
   await loadPages(true);
   recordScanDelta();
 }
@@ -267,6 +275,8 @@ function broadcast() {
 function pageView(p) {
   return {
     id: p.id, name: p.name, srcFile: p.srcFile, lang: p.lang, previewKind: p.previewKind,
+    previewUrl: p.previewUrl || null, previewImportWarning: !!p.previewImportWarning,
+    readPath: p.readPath || null,
     src: p.src, html: p.html, drifts: p.drifts,
     plan: computeFixPlan(p.src, p.drifts), dirty: p.src !== p.original,
   };
@@ -277,11 +287,13 @@ function snapshot() {
   const pages = state.pages.map(pageView);
   const scoreInfo = computeDriftScore(pages, state.tokens);
   return {
+    ready: state.ready,
+    bootError: state.bootError,
     frame: state.frame,
     tokens: state.tokens,
     tokenMode: state.tokenMode,
     live: state.live,
-    demoMode: state.demoMode,
+    demoMode: false,
     aiLive: state.aiLive,
     scanMode: state.scanMode,
     tutorialComplete: !!cur.tutorialComplete,
@@ -289,7 +301,7 @@ function snapshot() {
     agent: cur.agent || 'Claude Code',
     pages,
     files: all.map((d) => ({ id: d.id, name: d.name, src: d.src, excluded: excluded.some((x) => x && d.src.includes(x)) })),
-    dismissed: (cur.dismissed || []).length,
+    dismissed: dismissedCount(cur),
     driftScore: scoreInfo.score,
     driftStats: scoreInfo,
     scanNudge: state.scanNudge,
@@ -305,6 +317,15 @@ function snapshot() {
 async function handleApi(req, res, url, body) {
   const send = (obj, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    return send({ ok: !state.bootError, ready: state.ready, error: state.bootError });
+  }
+
+  await bootPromise;
+  if (state.bootError) {
+    return send({ error: state.bootError, onboardingComplete: configExists(), pages: [] }, 503);
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/state') {
     await syncPagesFromConfig();
     return send(snapshot());
@@ -318,11 +339,16 @@ async function handleApi(req, res, url, body) {
     for (const p of state.pages) {
       p.src = fs.readFileSync(p.readPath, 'utf8');
       if (p.htmlPath) p.html = fs.readFileSync(p.htmlPath, 'utf8');
-      if (p.seed) fs.writeFileSync(p.writePath, p.src);
       await recomputePage(p);
     }
     recordScanDelta();
     broadcast();
+    writeBootCache(loadConfig(), {
+      tokens: state.tokens,
+      diffTokens: state.diffTokens,
+      tokenMode: state.tokenMode,
+      pages: state.pages,
+    });
     return send(snapshot());
   }
 
@@ -345,9 +371,10 @@ async function handleApi(req, res, url, body) {
     const d = page?.drifts.find((x) => x.id === body.driftId);
     if (d) {
       const cur = loadConfig();
-      updateConfig({ dismissed: [...new Set([...(cur.dismissed || []), driftKey(d)])] });
+      const item = recordDismissItem(page.id, d);
+      updateConfig({ dismissedItems: appendDismissItem(cur, item) });
       page.drifts = page.drifts.filter((x) => x.id !== d.id).map((x, i) => ({ ...x, id: i + 1 }));
-      pushHistory('dismiss', { pageId: page.id, driftId: d.id, token: d.token?.name });
+      pushHistory('dismiss', { pageId: page.id, driftId: d.id, token: d.token?.name, element: item.elementName || item.element });
       recordScanDelta();
       broadcast();
     }
@@ -356,7 +383,7 @@ async function handleApi(req, res, url, body) {
 
   // Restore all dismissed suggestions.
   if (req.method === 'POST' && url.pathname === '/api/restore') {
-    updateConfig({ dismissed: [] });
+    updateConfig({ dismissed: [], dismissedItems: [] });
     for (const p of state.pages) await recomputePage(p);
     broadcast();
     return send(snapshot());
@@ -429,8 +456,8 @@ async function handleApi(req, res, url, body) {
     const prompt = body.message || 'Explain this drift and suggest the best fix.';
     const excerpt = page.src.split('\n').slice(Math.max(0, (d.locations[0]?.line || 1) - 3), (d.locations[0]?.line || 1) + 2).join('\n');
     const ctx = `Drift on ${page.srcFile}:\n${JSON.stringify({ category: d.category, severity: d.severity, token: d.token?.name, expected: d.expected, actual: d.actualValues, why: d.why, fix: d.fix, locations: d.locations.slice(0, 6) }, null, 2)}\n\nSource excerpt:\n${excerpt}`;
-    if (state.demoMode || !CFG.apiKey) {
-      return send({ reply: `${d.why || 'Token drift detected.'}\n\nSuggested fix: ${d.fix || 'Align with the design token.'}`, offline: true, demoMode: true });
+    if (!CFG.apiKey) {
+      return send({ reply: `${d.problem || d.why || 'Token drift detected.'}\n\nSuggested fix: ${d.solution || d.fix || 'Align with the design token.'}`, offline: true });
     }
     try {
       const llmCfg = resolveLlmConfig(loadConfig());
@@ -481,10 +508,10 @@ function serveStatic(req, res, url) {
   else if (rel.startsWith('/favicons/')) file = path.normalize(path.join(FAVICONS, rel.slice('/favicons/'.length)));
   else if (rel.startsWith('/shared/')) file = path.normalize(path.join(ROOT, 'src', rel.slice('/shared/'.length)));
   else {
-    const base = rel.startsWith('/seed/') || rel.startsWith('/fonts/') ? ROOT : WEB;
+    const base = rel.startsWith('/fonts/') ? ROOT : WEB;
     file = path.normalize(path.join(base, rel));
   }
-  const okRoot = file.startsWith(WEB) || file.startsWith(path.join(ROOT, 'seed')) || file.startsWith(path.join(ROOT, 'fonts')) || file.startsWith(FAVICONS) || file.startsWith(path.join(ROOT, 'src'));
+  const okRoot = file.startsWith(WEB) || file.startsWith(path.join(ROOT, 'fonts')) || file.startsWith(FAVICONS) || file.startsWith(path.join(ROOT, 'src'));
   if (!okRoot || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end('not found'); return; }
   // No caching for the app shell/JS so edits always show without a hard refresh.
   const noStore = /\.(jsx|html|js)$/.test(file);
@@ -497,8 +524,10 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
     clients.add(res);
+    bootPromise.then(() => {
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
+    });
     req.on('close', () => clients.delete(res));
     return;
   }
@@ -548,7 +577,6 @@ function startScanning() {
       for (const p of state.pages) {
         p.src = fs.readFileSync(p.readPath, 'utf8');
         if (p.htmlPath) p.html = fs.readFileSync(p.htmlPath, 'utf8');
-        if (p.seed) fs.writeFileSync(p.writePath, p.src);
       }
       refreshAnalysis();
       for (const p of state.pages) await recomputePage(p);
@@ -558,30 +586,51 @@ function startScanning() {
   }
 }
 
-async function init() {
+async function boot() {
   ensureProjectSources(loadConfig());
-  if (!state.demoMode) await loadFigmaOptional();
+  const cur = loadConfig();
+  if (cur.previewDevServer) {
+    try {
+      const sidecar = await startPreviewSidecar(
+        cur.previewDevServer,
+        `http://127.0.0.1:${PORT}/penny-bridge.js`,
+      );
+      state.previewProxyUrl = sidecar.url;
+      process.on('exit', () => sidecar.close());
+      console.log(`  Preview proxy → ${sidecar.url} → ${cur.previewDevServer}`);
+    } catch (e) {
+      console.warn(`  Preview proxy failed (${e.message}) — iframe will use dev server directly.`);
+    }
+  }
+  await loadFigmaOptional();
   await loadPages();
   state.lastDriftCount = state.pages.reduce((n, p) => n + p.drifts.length, 0);
   startScanning();
+  state.ready = true;
+  broadcast();
 }
 
-init()
-  .then(() => {
-    freePort(PORT);
-    server.on('error', (e) => {
-      if (e.code === 'EADDRINUSE') {
-        console.error(`\x1b[31mPort ${PORT} is already in use.\x1b[0m`);
-        console.error(`  Another Penny instance may still be running — open http://localhost:${PORT}`);
-        console.error(`  Or use a different port:  $env:PORT=5179; npm run web   (PowerShell)`);
-        process.exit(1);
-      }
-      throw e;
-    });
-    server.listen(PORT, () => {
-      console.log(`\x1b[36mPenny\x1b[0m → http://localhost:${PORT}`);
-      const mode = state.demoMode ? 'demo snapshot' : state.aiLive ? 'Azure OpenAI' : 'offline';
-      console.log(`  pages: ${state.pages.map((p) => p.srcFile).join(', ')}  |  baseline: ${state.tokenMode}  |  ${mode}  |  scan: ${state.scanMode}`);
-    });
-  })
-  .catch((e) => { console.error('\x1b[31mStartup failed:\x1b[0m', e.message); process.exit(1); });
+const bootPromise = boot().catch((e) => {
+  state.bootError = e.message;
+  console.error('\x1b[31mStartup failed:\x1b[0m', e.message);
+});
+
+freePort(PORT);
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\x1b[31mPort ${PORT} is already in use.\x1b[0m`);
+    console.error(`  Another Penny instance may still be running — open http://127.0.0.1:${PORT}`);
+    console.error(`  Or use a different port:  $env:PORT=5179; npm run web   (PowerShell)`);
+    process.exit(1);
+  }
+  throw e;
+});
+server.listen(PORT, () => {
+  console.log(`\x1b[36mPenny\x1b[0m → http://127.0.0.1:${PORT}`);
+  console.log('  Loading pages…');
+  bootPromise.then(() => {
+    if (!state.ready) return;
+    const mode = state.aiLive ? 'Azure OpenAI' : 'offline';
+    console.log(`  pages: ${state.pages.map((p) => p.srcFile).join(', ')}  |  baseline: ${state.tokenMode}  |  ${mode}  |  scan: ${state.scanMode}`);
+  });
+});

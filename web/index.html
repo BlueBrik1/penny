@@ -41,6 +41,10 @@
     @keyframes scanBar { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
     @keyframes scanPulse { 0%,100% { opacity: 0.65; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1); } }
     @keyframes scanRing { 0% { transform: scale(0.85); opacity: 0.35; } 100% { transform: scale(1.35); opacity: 0; } }
+    @keyframes loadingOrbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes loadingDots { 0%, 20% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }
+    .loading-orbit { animation: loadingOrbit 8s linear infinite; }
+    .loading-dots { display: inline-block; animation: loadingDots 1.4s ease-in-out infinite; letter-spacing: 0.05em; }
     .scan-bar { animation: scanBar 1.6s ease-in-out infinite; }
     .scan-pulse { animation: scanPulse 2.2s ease-in-out infinite; }
     .scan-ring { animation: scanRing 2s ease-out infinite; }

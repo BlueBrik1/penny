@@ -123,21 +123,3 @@ export function discoverSources(projectDir, opts = {}) {
   const sources = pairHtml(out.files, root);
   return { projectRoot: root, sources, via: 'discover' };
 }
-
-export function seedSourcePreset() {
-  const pages = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'seed', 'pages.json'), 'utf8'));
-  return {
-    projectRoot: PACKAGE_ROOT,
-    sources: pages.map((p) => ({ id: p.id, name: p.name, src: p.css, html: p.html })),
-    via: 'seed',
-  };
-}
-
-export function realSourcePreset() {
-  const pages = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'real', 'pages.json'), 'utf8'));
-  return {
-    projectRoot: PACKAGE_ROOT,
-    sources: pages.map((p) => ({ id: p.id, name: p.name, src: p.css, html: p.html })),
-    via: 'real',
-  };
-}

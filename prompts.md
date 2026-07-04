@@ -1,4 +1,3 @@
-1. AI integration
-2. Figma check
-3. Demo pages
-4. Runthrough
+1. Figma check
+2. Runthrough
+3. Publish to npm

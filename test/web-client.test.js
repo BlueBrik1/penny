@@ -27,10 +27,12 @@ test('snapshotToTui maps web pages to CLI problems', () => {
       }],
     }],
   };
-  const sources = [{ id: 'landing', name: 'Landing', path: '/proj/real/landing.css', file: 'landing.css' }];
+  const sources = [{ id: 'landing', name: 'Landing', path: '/proj/src/landing.css', file: 'landing.css' }];
   const { pages, problems } = snapshotToTui(snap, sources);
   assert.equal(pages.length, 1);
-  assert.equal(pages[0].path, '/proj/real/landing.css');
+  assert.equal(pages[0].path, '/proj/src/landing.css');
+  assert.equal(pages[0].src, undefined);
+  assert.equal(pages[0].text, undefined);
   assert.equal(problems.length, 1);
   assert.equal(problems[0].drift.problem, 'Wrong red');
 });

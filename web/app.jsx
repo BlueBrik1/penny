@@ -3,7 +3,7 @@ import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import {
   groupDrifts, spotlightSelectorsFromDrift, hasApplicableEdits, highlightLocations,
 } from '/shared/interactive.js';
-import { collectMapMarkers, renderMapInIframe, clearMapInIframe, scrollDriftIntoView } from '/shared/drift-map.js';
+import { collectMapMarkers, renderMapInIframe, clearMapInIframe, scrollDriftIntoView, renderSpotlightInIframe, clearSpotlightInIframe, spotlightMarkersFromDrift } from '/shared/drift-map.js';
 import { buildPreviewDocument, previewSandbox, previewKindLabel, detectPreviewKind, buildPulseCss, PREVIEW_KIND } from '/shared/preview.js';
 
 async function apiPost(path, body = {}) {
@@ -120,7 +120,7 @@ function countSeverities(drifts) {
   return c;
 }
 
-function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFigma, onTutorial, busy, driftScore, scanNudge, groupMode, onGroup, heatmapOn, onHeatmap, tokenCount, tokenMode, scanMode, demoMode, aiLive, onCopyCli, onShortcuts }) {
+function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFigma, onTutorial, busy, driftScore, scanNudge, groupMode, onGroup, heatmapOn, onHeatmap, tokenCount, tokenMode, scanMode, aiLive, onCopyCli, onShortcuts }) {
   const sev = countSeverities(drifts);
   const ghost = { border: `1px solid ${paper(0.3)}`, color: paper(0.9) };
   const chip = (s) => ({
@@ -137,8 +137,7 @@ function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFig
       <span className="text-sm font-medium shrink-0" style={{ color: paper(0.85) }}>{drifts.length} drift{drifts.length !== 1 ? 's' : ''}</span>
       <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{ background: paper(0.06), color: paper(0.7) }} title="Token adherence">{driftScore ?? '—'}% aligned</span>
       <span className="text-[11px] shrink-0" style={{ color: paper(0.4) }}>{tokenCount ?? 0} found · {tokenMode === 'figma' ? 'figma' : 'code'} · scan {scanMode ?? '—'}</span>
-      {demoMode && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0" style={{ background: '#f5a62322', color: '#f5a623', border: '1px solid #f5a62344' }} title="Bundled seed demo — add API key in penny onboarding">demo</span>}
-      {aiLive && !demoMode && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0" style={{ background: '#82d69a22', color: '#82d69a', border: '1px solid #82d69a44' }} title="Live AI analysis">AI</span>}
+      {aiLive && <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0" style={{ background: '#82d69a22', color: '#82d69a', border: '1px solid #82d69a44' }} title="Live AI analysis">AI</span>}
       {scanNudge && <span className="text-xs shrink-0" style={{ color: scanNudge.delta > 0 ? '#82d69a' : '#f5a623' }}>{scanNudge.message}</span>}
       {['high', 'medium', 'low'].map((s) => sev[s] > 0 && (
         <button key={s} onClick={() => onFilter(sevFilter === s ? null : s)} className="px-2 py-0.5 rounded text-xs uppercase tracking-wide shrink-0"
@@ -156,7 +155,7 @@ function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFig
         <button onClick={onTutorial} className="px-2 py-1 rounded text-xs shrink-0" style={ghost}>Tutorial</button>
       )}
       <button onClick={onRescan} disabled={busy} className="px-2 py-1 rounded text-xs disabled:opacity-40 shrink-0" style={ghost}>Rescan</button>
-      {onHardRescan && !demoMode && (
+      {onHardRescan && (
         <button onClick={onHardRescan} disabled={busy} className="px-2 py-1 rounded text-xs disabled:opacity-40 shrink-0" style={{ ...ghost, color: '#f5a623', borderColor: '#f5a62355' }} title="Clear dismissals and rerun AI from scratch">Hard rescan</button>
       )}
     </div>
@@ -224,25 +223,51 @@ function SetupGate() {
   );
 }
 
+function InitialLoading() {
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#111111' }}>
+      <div className="relative mb-10 flex items-center justify-center" style={{ width: 96, height: 96 }}>
+        <span className="absolute inset-0 rounded-full scan-ring" style={{ border: `2px solid ${paper(0.22)}` }} />
+        <span className="absolute inset-3 rounded-full scan-ring" style={{ border: `1px solid ${paper(0.12)}`, animationDelay: '0.55s' }} />
+        <span className="absolute inset-6 rounded-full loading-orbit" style={{ border: `1px dashed ${paper(0.08)}` }} />
+        <img src="/logo.png" alt="" className="h-12 w-auto scan-pulse relative z-10" style={{ mixBlendMode: 'screen' }} />
+      </div>
+      <h1 className="text-2xl font-semibold mb-2 text-center tracking-tight" style={{ color: paper(0.95) }}>
+        Loading<span className="loading-dots">...</span>
+      </h1>
+      <p className="text-sm text-center max-w-md leading-relaxed mb-8" style={{ color: paper(0.48) }}>
+        Warming up your dashboard — this can take up to 5 minutes on first load while Penny scans your sources and runs AI analysis.
+      </p>
+      <div className="w-80 h-1.5 rounded-full overflow-hidden" style={{ background: paper(0.07) }}>
+        <div className="h-full w-1/3 rounded-full scan-bar" style={{ background: paper(0.72) }} />
+      </div>
+    </div>
+  );
+}
+
 function ScanOverlay({ mode, aiLive }) {
   const hard = mode === 'hard';
+  const boot = mode === 'boot';
+  const title = hard ? 'Hard rescan in progress' : boot ? 'Loading Penny' : 'Rescanning';
+  const detail = hard
+    ? 'Clearing dismissals and running fresh AI analysis on every page.'
+    : boot
+      ? 'Scanning your sources and preparing the dashboard. This can take up to 5 minutes on first load.'
+      : 'Re-reading sources and updating drift results.';
   return (
     <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center px-6" style={{ background: 'rgba(17,17,17,0.94)' }}>
-      <div className="relative mb-10 flex items-center justify-center" style={{ width: 88, height: 88 }}>
+      <div className="relative mb-10 flex items-center justify-center" style={{ width: 96, height: 96 }}>
         <span className="absolute inset-0 rounded-full scan-ring" style={{ border: `2px solid ${paper(0.25)}` }} />
-        <span className="absolute inset-2 rounded-full scan-ring" style={{ border: `1px solid ${paper(0.15)}`, animationDelay: '0.6s' }} />
-        <img src="/logo.png" alt="" className="h-11 w-auto scan-pulse relative z-10" style={{ mixBlendMode: 'screen' }} />
+        <span className="absolute inset-3 rounded-full scan-ring" style={{ border: `1px solid ${paper(0.15)}`, animationDelay: '0.6s' }} />
+        <span className="absolute inset-6 rounded-full loading-orbit" style={{ border: `1px dashed ${paper(0.1)}` }} />
+        <img src="/logo.png" alt="" className="h-12 w-auto scan-pulse relative z-10" style={{ mixBlendMode: 'screen' }} />
       </div>
-      <h2 className="text-xl font-semibold mb-2 text-center" style={{ color: paper(0.95) }}>
-        {hard ? 'Hard rescan in progress' : 'Rescanning'}
-      </h2>
-      <p className="text-sm mb-8 text-center max-w-sm leading-relaxed" style={{ color: paper(0.5) }}>
-        {hard
-          ? 'Clearing dismissals and running fresh AI analysis on every page.'
-          : 'Re-reading sources and updating drift results.'}
-        {aiLive ? ' Live AI scans can take a few minutes.' : ''}
+      <h2 className="text-2xl font-semibold mb-2 text-center tracking-tight" style={{ color: paper(0.95) }}>{title}</h2>
+      <p className="text-sm mb-8 text-center max-w-md leading-relaxed" style={{ color: paper(0.5) }}>
+        {detail}
+        {(aiLive && (boot || hard)) ? ' Live AI scans may add a few extra minutes.' : ''}
       </p>
-      <div className="w-72 h-1.5 rounded-full overflow-hidden" style={{ background: paper(0.08) }}>
+      <div className="w-80 h-1.5 rounded-full overflow-hidden" style={{ background: paper(0.08) }}>
         <div className="h-full w-1/3 rounded-full scan-bar" style={{ background: hard ? '#f5a623' : paper(0.75) }} />
       </div>
     </div>
@@ -306,22 +331,39 @@ function iframeWin(iframe) {
   try { return iframe?.contentWindow ?? null; } catch { return null; }
 }
 
-function DriftMapOverlay({ iframeRef, markers, visible, contentKey }) {
+function SpotlightOverlay({ iframeRef, drift, visible, contentKey, usePostMessage }) {
   useEffect(() => {
     const clear = () => {
-      const doc = iframeDoc(iframeRef.current);
-      if (doc) clearMapInIframe(doc);
+      if (!usePostMessage) {
+        const doc = iframeDoc(iframeRef.current);
+        if (doc) clearSpotlightInIframe(doc);
+      }
+      try { iframeWin(iframeRef.current)?.postMessage({ type: 'penny-spotlight', markers: [] }, '*'); } catch { /* ignore */ }
     };
-    if (!visible || !markers.length) {
+    if (!visible || !drift) {
+      clear();
+      return undefined;
+    }
+    const markers = spotlightMarkersFromDrift(drift);
+    if (!markers.length) {
       clear();
       return undefined;
     }
     const render = () => {
+      if (usePostMessage) {
+        iframeWin(iframeRef.current)?.postMessage({ type: 'penny-spotlight', markers, scroll: true }, '*');
+        return;
+      }
       const doc = iframeDoc(iframeRef.current);
-      if (doc?.body) renderMapInIframe(doc, markers);
+      if (doc?.body) {
+        renderSpotlightInIframe(doc, drift);
+        scrollDriftIntoView(doc, drift);
+      } else {
+        iframeWin(iframeRef.current)?.postMessage({ type: 'penny-spotlight', markers, scroll: true }, '*');
+      }
     };
     render();
-    const timers = [80, 250, 600, 1200].map((ms) => setTimeout(render, ms));
+    const timers = [80, 250, 600, 1200, 2500].map((ms) => setTimeout(render, ms));
     const poll = setInterval(render, 1500);
     const iframe = iframeRef.current;
     iframe?.addEventListener('load', render);
@@ -336,7 +378,48 @@ function DriftMapOverlay({ iframeRef, markers, visible, contentKey }) {
       window.removeEventListener('resize', render);
       clear();
     };
-  }, [visible, markers, contentKey, iframeRef]);
+  }, [visible, drift?.id, contentKey, iframeRef, usePostMessage]);
+  return null;
+}
+
+function DriftMapOverlay({ iframeRef, markers, visible, contentKey, usePostMessage }) {
+  useEffect(() => {
+    const clear = () => {
+      if (!usePostMessage) {
+        const doc = iframeDoc(iframeRef.current);
+        if (doc) clearMapInIframe(doc);
+      }
+      try { iframeWin(iframeRef.current)?.postMessage({ type: 'penny-spotlight', markers: [], map: true }, '*'); } catch { /* ignore */ }
+    };
+    if (!visible || !markers.length) {
+      clear();
+      return undefined;
+    }
+    const render = () => {
+      if (usePostMessage) {
+        iframeWin(iframeRef.current)?.postMessage({ type: 'penny-spotlight', markers, map: true }, '*');
+        return;
+      }
+      const doc = iframeDoc(iframeRef.current);
+      if (doc?.body) renderMapInIframe(doc, markers);
+    };
+    render();
+    const timers = [80, 250, 600, 1200, 2500].map((ms) => setTimeout(render, ms));
+    const poll = setInterval(render, 1500);
+    const iframe = iframeRef.current;
+    iframe?.addEventListener('load', render);
+    const win = iframeWin(iframe);
+    try { win?.addEventListener('scroll', render, true); } catch { /* cross-origin */ }
+    window.addEventListener('resize', render);
+    return () => {
+      timers.forEach(clearTimeout);
+      clearInterval(poll);
+      iframe?.removeEventListener('load', render);
+      try { win?.removeEventListener('scroll', render, true); } catch { /* cross-origin */ }
+      window.removeEventListener('resize', render);
+      clear();
+    };
+  }, [visible, markers, contentKey, iframeRef, usePostMessage]);
   return null;
 }
 
@@ -350,26 +433,29 @@ function RenderedWindow({ iframeRef, page, highlightDrift, mapOn, pulseSelectors
     [page.previewKind, page.src, page.srcFile, page.html],
   );
   const pulseCss = useMemo(() => {
-    if (!pulseSelectors?.size) return '';
+    if (!pulseSelectors?.size || page.previewUrl) return '';
     const tw = previewKind === PREVIEW_KIND.TAILWIND_JSX || previewKind === PREVIEW_KIND.REACT_JSX
       || previewKind === PREVIEW_KIND.VUE || previewKind === PREVIEW_KIND.SVELTE;
     return buildPulseCss([...pulseSelectors], tw);
-  }, [pulseSelectors, previewKind]);
+  }, [pulseSelectors, previewKind, page.previewUrl]);
   const srcDoc = useMemo(
-    () => buildPreviewDocument({
+    () => (page.previewUrl ? null : buildPreviewDocument({
       src: page.src,
       srcFile: page.srcFile,
       html: page.html || '',
       previewKind,
       spotSelectors,
       extraCss: pulseCss,
-    }),
-    [page.src, page.srcFile, page.html, previewKind, spotSelectors, pulseCss],
+      previewImportWarning: page.previewImportWarning,
+    })),
+    [page.src, page.srcFile, page.html, page.previewUrl, page.previewImportWarning, previewKind, spotSelectors, pulseCss],
   );
-  const sandbox = previewSandbox(previewKind);
+  const sandbox = page.previewUrl
+    ? 'allow-scripts allow-same-origin allow-forms allow-popups'
+    : previewSandbox(previewKind);
 
   useEffect(() => {
-    if (mapOn || !highlightDrift) return undefined;
+    if (mapOn || !highlightDrift || page.previewUrl) return undefined;
     const scroll = () => {
       const doc = iframeDoc(iframeRef.current);
       if (doc) scrollDriftIntoView(doc, highlightDrift);
@@ -382,7 +468,20 @@ function RenderedWindow({ iframeRef, page, highlightDrift, mapOn, pulseSelectors
       timers.forEach(clearTimeout);
       iframe?.removeEventListener('load', scroll);
     };
-  }, [highlightDrift?.id, mapOn, srcDoc, refreshKey, iframeRef]);
+  }, [highlightDrift?.id, mapOn, srcDoc, refreshKey, iframeRef, page.previewUrl]);
+
+  if (page.previewUrl) {
+    return (
+      <iframe
+        key={`${refreshKey}-${page.previewUrl}`}
+        ref={iframeRef}
+        title="Rendered page"
+        src={page.previewUrl}
+        sandbox={sandbox}
+        className="w-full h-full border-0 bg-white"
+      />
+    );
+  }
 
   return (
     <iframe
@@ -768,7 +867,7 @@ function App() {
     const es = new EventSource('/api/events');
     es.onmessage = (e) => {
       const snap = JSON.parse(e.data);
-      if (!Array.isArray(snap.pages)) return;
+      if (!snap.ready || !Array.isArray(snap.pages)) return;
       setD(snap);
       if (!localFocus && snap.focus?.pageId) {
         setActiveId(snap.focus.pageId);
@@ -1071,8 +1170,19 @@ function App() {
     return () => window.removeEventListener('keydown', h);
   }, [figmaOpen]);
 
-  if (!d) return <div className="p-8" style={{ color: paper(0.6) }}>Loading…</div>;
+  if (!d) return <InitialLoading />;
   if (!d.onboardingComplete) return <SetupGate />;
+  if (!d.ready && !d.bootError) return <ScanOverlay mode="boot" aiLive={d.aiLive} />;
+  if (d.bootError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen px-6 text-center">
+        <img src="/logo.png" alt="penny" className="h-10 w-auto mb-8" style={{ mixBlendMode: 'screen' }} />
+        <h1 className="text-xl font-semibold mb-3" style={{ color: paper(0.95) }}>Startup failed</h1>
+        <p className="text-sm mb-6 max-w-md leading-relaxed mono" style={{ color: paper(0.55) }}>{d.bootError}</p>
+        <button type="button" onClick={() => api.state().then(setD).catch(() => {})} className="px-4 py-2 rounded text-sm" style={{ background: paper(0.08), border: `1px solid ${paper(0.2)}`, color: paper(0.85) }}>Retry</button>
+      </div>
+    );
+  }
   if (d.loadError && !pages.length) {
     return (
       <div className="flex flex-col items-center justify-center h-screen px-6 text-center">
@@ -1086,11 +1196,11 @@ function App() {
     );
   }
 
-  if (!active) return <div className="p-8" style={{ color: paper(0.6) }}>Loading…</div>;
+  if (!active) return <InitialLoading />;
 
   const scanOverlay = busy && scanMode ? <ScanOverlay mode={scanMode} aiLive={d?.aiLive} /> : null;
 
-  if (totalDrifts === 0) {
+  if (d.ready && totalDrifts === 0) {
     return (
       <>
         {scanOverlay}
@@ -1120,7 +1230,7 @@ function App() {
           groupMode={groupMode} onGroup={() => { setGroupMode((v) => !v); setCur(0); }}
           heatmapOn={heatmapOn} onHeatmap={() => setHeatmapOn((v) => !v)}
           tokenCount={d.tokens?.length ?? 0} tokenMode={d.tokenMode} scanMode={d.scanMode}
-          demoMode={d.demoMode} aiLive={d.aiLive}
+          aiLive={d.aiLive}
           onCopyCli={copyCliLink} onShortcuts={() => setShortcutsOpen(true)}
         />
       </div>
@@ -1145,7 +1255,8 @@ function App() {
           </div>
           <div className="flex-1 min-h-0 w-full bg-white relative">
             <RenderedWindow iframeRef={previewIframeRef} page={active} highlightDrift={drift} mapOn={heatmapOn} pulseSelectors={pulseSelectors} refreshKey={previewRefresh} />
-            <DriftMapOverlay iframeRef={previewIframeRef} markers={mapMarkers} visible={heatmapOn} contentKey={previewContentKey} />
+            <SpotlightOverlay iframeRef={previewIframeRef} drift={drift} visible={!heatmapOn && !!drift && !!active.previewUrl} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
+            <DriftMapOverlay iframeRef={previewIframeRef} markers={mapMarkers} visible={heatmapOn} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
             {heatmapOn && <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(17,17,17,0.7)', color: paper(0.8) }}>Drift map</span>}
           </div>
           {elementChips.length > 0 && (

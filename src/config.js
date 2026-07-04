@@ -5,18 +5,20 @@
 //   { figmaToken, figmaFileKey, figmaFrameNode, figmaUrl,
 //     azureOpenAiKey, azureOpenAiEndpoint, azureOpenAiDeployment, azureOpenAiApiVersion,
 //     scanMode: 'ondemand'|'watch'|'interval'|'autonomous'|'agent', intervalMinutes,
-//     onboardingComplete, tutorialComplete, demoMode,
-//     exclude: [<path substring>], sources: [{ id, name, src, html? }] }
+//     onboardingComplete, tutorialComplete,
+//     exclude: [<path substring>], sources: [{ id, name, src, html? }],
+//     dismissedItems: [{ pageId, element, elementName?, category, type, token? }] }
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { select, input } from './prompt.js';
-import { runAgentHooksTutorial } from './agent-hooks-tutorial.js';
-import { isDemoMode } from './demo-mode.js';
-import { discoverSources, seedSourcePreset, realSourcePreset } from './discover-sources.js';
+import { installAgentHooks } from './install-hooks.js';
+import { hasApiKey } from './demo-mode.js';
+import { discoverSources } from './discover-sources.js';
 import { createLlmClient, DEFAULT_ENDPOINT, DEFAULT_DEPLOYMENT, DEFAULT_API_VERSION } from './llm.js';
+import { clearBootCache } from './boot-cache.js';
 
 export const CONFIG_PATH = process.env.DRIFTRC || path.join(os.homedir(), '.driftrc');
 
@@ -36,11 +38,12 @@ const DEFAULTS = {
   intervalMinutes: 5,
   exclude: [],
   projectRoot: '',
-  sources: [], // empty -> auto-discover or seed; set during onboarding
+  sources: [], // empty -> auto-discover during onboarding or ensureProjectSources
   uiMode: 'dashboard',
   onboardingComplete: false,
   tutorialComplete: false,
-  demoMode: false,
+  previewDevServer: '',
+  dismissedItems: [],
 };
 
 export function configExists() {
@@ -74,12 +77,12 @@ export function updateConfig(patch) {
 
 /** Clear dismissals and scan memory for a fresh AI pass. */
 export function resetScanState() {
-  return updateConfig({ dismissed: [], lastScanDriftCount: null });
+  clearBootCache();
+  return updateConfig({ dismissed: [], dismissedItems: [], lastScanDriftCount: null });
 }
 
 /** Fill projectRoot + sources when missing (live mode only). */
 export function ensureProjectSources(cfg) {
-  if (isDemoMode(cfg)) return cfg;
   if (cfg.sources?.length) return cfg;
   const preset = discoverSources(process.cwd());
   if (!preset.sources.length) return cfg;
@@ -89,32 +92,20 @@ export function ensureProjectSources(cfg) {
 }
 
 async function configureSources(cfg) {
-  if (isDemoMode(cfg)) {
-    const preset = seedSourcePreset();
-    cfg.projectRoot = preset.projectRoot;
-    cfg.sources = preset.sources;
-    return cfg;
-  }
-
   const choices = [
     { label: `This folder — auto-detect CSS / JSX (${process.cwd()})`, value: 'cwd' },
-    { label: 'Bundled demo — seed pages shipped with Penny', value: 'seed' },
-    { label: 'Real test site — Meridian drift examples', value: 'real' },
     { label: 'Another folder — type a path', value: 'path' },
   ];
   const pick = await select('What should Penny scan?', choices, 0);
 
-  let preset;
-  if (pick === 'seed') preset = seedSourcePreset();
-  else if (pick === 'real') preset = realSourcePreset();
-  else if (pick === 'path') {
-    const dir = await input('Project folder', process.cwd(), 'Root of the codebase to scan.');
-    preset = discoverSources(dir);
-  } else preset = discoverSources(process.cwd());
+  const preset = pick === 'path'
+    ? discoverSources(await input('Project folder', process.cwd(), 'Root of the codebase to scan.'))
+    : discoverSources(process.cwd());
 
   if (!preset.sources.length) {
-    console.log('\n\x1b[33m⚠ No CSS / JSX pages found — using bundled demo.\x1b[0m\n');
-    preset = seedSourcePreset();
+    console.error('\n\x1b[31mNo CSS / JSX pages found in that folder.\x1b[0m');
+    console.error('  Point Penny at your frontend root (where .jsx / .css live) and try again.\n');
+    process.exit(1);
   }
 
   cfg.projectRoot = preset.projectRoot;
@@ -126,13 +117,39 @@ async function configureSources(cfg) {
   return cfg;
 }
 
+function parsePreviewDevServer(raw) {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s.replace(/\/$/, '');
+  const hostMatch = s.match(/^(?:localhost|127\.0\.0\.1):(\d+)/i);
+  if (hostMatch) return `http://localhost:${hostMatch[1]}`;
+  const port = s.replace(/\D/g, '') || '3000';
+  return `http://localhost:${port}`;
+}
+
+async function configurePreviewDevServer(cfg) {
+  const existing = cfg.previewDevServer || '';
+  const def = existing ? existing.replace(/^https?:\/\/(localhost|127\.0\.0\.1):/i, '') : '3000';
+  const raw = await input(
+    '(required for React/Vite) What\'s the port for your dev server? (localhost:xxxx)',
+    def,
+    [
+      'Required for React/Vite live preview in penny view.',
+      'Run npm run dev and enter the port it shows (e.g. 3000 for CRA, 5173 for Vite).',
+    ].join('\n'),
+  );
+  cfg.previewDevServer = parsePreviewDevServer(raw || def);
+  console.log(`\n  \x1b[32m✓\x1b[0m previewDevServer → ${cfg.previewDevServer}\n`);
+  return cfg;
+}
+
 // First-run onboarding — Figma credentials are optional.
 export async function onboard() {
   const cfg = loadConfig();
   process.stdout.write('\x1b[2J\x1b[H');
 
   console.log('\x1b[1mPenny\x1b[0m scans your CSS and JSX for inconsistent colors, spacing, and typography.');
-  console.log('No Figma file required — the bundled demo works out of the box.\n');
+  console.log('An Azure OpenAI API key is required.\n');
 
   const connectFigma = await select('Connect Figma as a design baseline?', [
     { label: 'No — scan the codebase only (recommended)', value: false },
@@ -157,30 +174,26 @@ export async function onboard() {
   }
 
   cfg.azureOpenAiKey = await input(
-    'Azure OpenAI API key (required for full AI analysis)',
+    'Azure OpenAI API key',
     cfg.azureOpenAiKey || process.env.AZURE_OPENAI_API_KEY || '',
     [
       'Penny uses Azure OpenAI to analyze your CSS/JSX and produce drifts, fixes, and map labels.',
       'Get a key from your Azure OpenAI resource → Keys and Endpoint.',
-      'Leave blank to run in demo mode (bundled seed pages + snapshot only).',
     ].join('\n'),
   );
 
   if (!cfg.azureOpenAiKey.trim()) {
-    cfg.azureOpenAiKey = '';
-    cfg.demoMode = true;
-    console.log('\n\x1b[33m⚠ Demo mode\x1b[0m — bundled seed pages only, precomputed drifts, no live AI.');
-    console.log('  Run \x1b[1mpenny onboarding\x1b[0m again with an Azure OpenAI key to scan your own codebase.\n');
-  } else {
-    cfg.demoMode = false;
-    cfg.azureOpenAiKey = cfg.azureOpenAiKey.trim();
-    try {
-      const client = createLlmClient(cfg);
-      await client.complete({ system: 'Reply with ok only.', user: 'ping', maxTokens: 8 });
-      console.log('\n\x1b[32m✓ API key validated\x1b[0m\n');
-    } catch (e) {
-      console.log(`\n\x1b[33m⚠ Key validation failed\x1b[0m (${e.message}). Saving anyway — check the key if scans fail.\n`);
-    }
+    console.error('\n\x1b[31mAPI key required.\x1b[0m Penny cannot run without an Azure OpenAI key.\n');
+    process.exit(1);
+  }
+
+  cfg.azureOpenAiKey = cfg.azureOpenAiKey.trim();
+  try {
+    const client = createLlmClient(cfg);
+    await client.complete({ system: 'Reply with ok only.', user: 'ping', maxTokens: 8 });
+    console.log('\n\x1b[32m✓ API key validated\x1b[0m\n');
+  } catch (e) {
+    console.log(`\n\x1b[33m⚠ Key validation failed\x1b[0m (${e.message}). Saving anyway — check the key if scans fail.\n`);
   }
 
   const agent = await select('Which agent handles "Ask your agent"?',
@@ -203,6 +216,7 @@ export async function onboard() {
   }
 
   await configureSources(cfg);
+  await configurePreviewDevServer(cfg);
 
   cfg.onboardingComplete = true;
   saveConfig(cfg);
@@ -211,21 +225,22 @@ export async function onboard() {
   console.log(`  Config saved to ${CONFIG_PATH}`);
   const scanLabel = cfg.scanMode === 'interval' ? `${cfg.scanMode} (${cfg.intervalMinutes}m)`
     : cfg.scanMode === 'agent' ? 'agent (hooks after each prompt)' : cfg.scanMode;
-  const modeLabel = isDemoMode(cfg) ? 'demo (seed snapshot)' : 'live AI';
   console.log(`  agent: ${cfg.agent}   scan: ${scanLabel}`);
-  console.log(`  mode: ${modeLabel}`);
-  console.log(`  pages: ${cfg.sources.length} under ${cfg.projectRoot || '(bundled)'}`);
+  console.log(`  pages: ${cfg.sources.length} under ${cfg.projectRoot}`);
+  console.log(`  preview: ${cfg.previewDevServer || '(not set)'}`);
   console.log(`  baseline: ${cfg.figmaToken && cfg.figmaFileKey ? 'Figma file' : 'codebase (intrinsic)'}`);
   console.log('');
 
   if (cfg.scanMode === 'agent') {
-    await runAgentHooksTutorial(cfg);
-  } else {
-    console.log('\x1b[2mTip:\x1b[0m Run \x1b[1mpenny onboarding\x1b[0m and pick \x1b[1mWhen your agent finishes\x1b[0m to enable agent hooks.');
+    const paths = installAgentHooks(cfg.projectRoot || process.cwd());
+    console.log('\x1b[32m✓ Agent hooks installed\x1b[0m');
+    console.log(`  ${paths.hookScript}`);
+    console.log(`  ${paths.claude}`);
+    console.log(`  ${paths.cursor}`);
+    console.log('  Reload Cursor if open. Use Claude Code / Cursor from this project root.\n');
   }
 
   console.log('  \x1b[1mNext step:\x1b[0m  penny view   (restart if already open)');
   console.log('');
-  if (cfg.scanMode === 'agent') cfg.quitAfterSetup = true;
   return cfg;
 }

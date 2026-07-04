@@ -7,19 +7,22 @@ import { fileURLToPath } from 'node:url';
 import {
   detectPreviewKind, PREVIEW_KIND, buildPreviewDocument, synthesizeHtmlFromCss,
   companionHtmlPath, extractExportName, previewSandbox, prepareReactForBabel,
+  hasExternalImports, resolvePreviewTarget,
 } from '../src/preview.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('detectPreviewKind for CSS+HTML seed page', () => {
-  const css = fs.readFileSync(path.join(root, 'seed/deployed.css'), 'utf8');
-  const html = fs.readFileSync(path.join(root, 'seed/home.html'), 'utf8');
-  assert.equal(detectPreviewKind(css, 'deployed.css', html), PREVIEW_KIND.CSS_HTML);
+const FIX = path.join(root, 'test/fixtures');
+
+test('detectPreviewKind for CSS+HTML page', () => {
+  const css = fs.readFileSync(path.join(FIX, 'sample.css'), 'utf8');
+  const html = fs.readFileSync(path.join(FIX, 'sample.html'), 'utf8');
+  assert.equal(detectPreviewKind(css, 'sample.css', html), PREVIEW_KIND.CSS_HTML);
 });
 
 test('detectPreviewKind for Tailwind JSX', () => {
-  const jsx = fs.readFileSync(path.join(root, 'seed/PricingCard.jsx'), 'utf8');
-  assert.equal(detectPreviewKind(jsx, 'PricingCard.jsx', ''), PREVIEW_KIND.TAILWIND_JSX);
+  const jsx = fs.readFileSync(path.join(FIX, 'sample.jsx'), 'utf8');
+  assert.equal(detectPreviewKind(jsx, 'sample.jsx', ''), PREVIEW_KIND.REACT_JSX);
 });
 
 test('detectPreviewKind for css-only synthesizes preview body', () => {
@@ -41,16 +44,42 @@ test('companionHtmlPath swaps extension', () => {
 });
 
 test('buildPreviewDocument includes tailwind script for jsx', () => {
-  const jsx = fs.readFileSync(path.join(root, 'seed/PricingCard.jsx'), 'utf8');
-  const doc = buildPreviewDocument({ src: jsx, srcFile: 'PricingCard.jsx', previewKind: PREVIEW_KIND.TAILWIND_JSX });
+  const jsx = fs.readFileSync(path.join(FIX, 'sample.jsx'), 'utf8');
+  const doc = buildPreviewDocument({ src: jsx, srcFile: 'sample.jsx' });
   assert.match(doc, /tailwindcss\.com/);
-  assert.match(doc, /class=/);
+  assert.match(doc, /babel/);
+  assert.match(doc, /PricingCard/);
+});
+
+test('hasExternalImports detects local imports', () => {
+  assert.equal(hasExternalImports(`import X from './Foo';\nexport function App() { return <X />; }`), true);
+  assert.equal(hasExternalImports(`import React from 'react';\nexport function App() { return <div />; }`), false);
+});
+
+test('resolvePreviewTarget uses dev server for multi-file jsx', () => {
+  const src = `import Hero from './Hero';\nexport function Page() { return <Hero />; }`;
+  const t = resolvePreviewTarget({
+    src, srcFile: 'Page.jsx', previewDevServer: 'http://localhost:3000', previewPath: '/pricing',
+    previewProxyUrl: 'http://127.0.0.1:34567',
+  });
+  assert.equal(t.mode, 'url');
+  assert.equal(t.previewUrl, 'http://127.0.0.1:34567/pricing');
+});
+
+test('resolvePreviewTarget uses dev server for standalone jsx when previewDevServer set', () => {
+  const src = `export default function PartnerMarquee() { return <div />; }`;
+  const t = resolvePreviewTarget({
+    src, srcFile: 'PartnerMarquee.jsx', previewDevServer: 'http://localhost:3000',
+    previewProxyUrl: 'http://127.0.0.1:34567',
+  });
+  assert.equal(t.mode, 'url');
+  assert.equal(t.previewUrl, 'http://127.0.0.1:34567/');
 });
 
 test('react preview uses babel and export name', () => {
-  const jsx = fs.readFileSync(path.join(root, 'seed/PricingCard.jsx'), 'utf8');
+  const jsx = fs.readFileSync(path.join(FIX, 'sample.jsx'), 'utf8');
   assert.equal(extractExportName(jsx), 'PricingCard');
-  const doc = buildPreviewDocument({ src: jsx, srcFile: 'PricingCard.jsx', previewKind: PREVIEW_KIND.REACT_JSX });
+  const doc = buildPreviewDocument({ src: jsx, srcFile: 'sample.jsx', previewKind: PREVIEW_KIND.REACT_JSX });
   assert.match(doc, /babel/);
   assert.match(doc, /PricingCard/);
 });

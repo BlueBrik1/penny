@@ -1,7 +1,7 @@
 // Minimal arrow-key prompts for the CLI: a single-select list and a text input.
 // select() is fully keyboard-driven (up/down, enter, esc) with one clear marker
 // (inverted row, no second glyph) and renders in place to avoid flicker.
-// On Windows, readline + raw mode conflict — use numbered pick there instead.
+// select() is fully keyboard-driven (up/down, enter, esc) on all platforms.
 
 import readline from 'node:readline';
 
@@ -13,30 +13,7 @@ function releaseStdin() {
   if (process.stdin.isPaused()) process.stdin.resume();
 }
 
-function selectByNumber(question, options, initial = 0) {
-  const i = Math.max(0, Math.min(initial, options.length - 1));
-  return new Promise((resolve) => {
-    releaseStdin();
-    process.stdout.write(`\n${C.q}?${C.reset} ${question}\n\n`);
-    options.forEach((o, idx) => {
-      const mark = idx === i ? `${C.q}›${C.reset}` : ' ';
-      process.stdout.write(`${mark} ${idx + 1}. ${o.label}${idx === i ? ` ${C.dim}(default)${C.reset}` : ''}\n`);
-    });
-    process.stdout.write(`\n${C.dim}Enter a number, or press Enter for the default${C.reset}\n`);
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    rl.question(`${C.q}?${C.reset} Choice [1-${options.length}]${C.dim} (${i + 1})${C.reset}: `, (a) => {
-      rl.close();
-      releaseStdin();
-      const n = parseInt(a.trim() || String(i + 1), 10);
-      resolve(n >= 1 && n <= options.length ? options[n - 1].value : options[i].value);
-    });
-  });
-}
-
 export function select(question, options, initial = 0) {
-  if (process.platform === 'win32' || process.env.PENNY_SIMPLE_PROMPTS === '1') {
-    return selectByNumber(question, options, initial);
-  }
   return new Promise((resolve) => {
     let i = Math.max(0, Math.min(initial, options.length - 1));
     let armed = false;

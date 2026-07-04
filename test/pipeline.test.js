@@ -12,8 +12,9 @@ import { normalizeColor, colorDistance } from '../src/color.js';
 import { diff } from '../src/diff.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(root, 'seed/figma-export.json'), 'utf8')));
-const usages = parseCss(fs.readFileSync(join(root, 'seed/deployed.css'), 'utf8'), 'deployed.css');
+const FIX = join(root, 'test/fixtures');
+const tokens = parseFigmaExport(JSON.parse(fs.readFileSync(join(FIX, 'figma-export.json'), 'utf8')));
+const usages = parseCss(fs.readFileSync(join(FIX, 'sample.css'), 'utf8'), 'sample.css');
 const drifts = diff(tokens, usages);
 const find = (cat, name) => drifts.find((d) => d.category === cat && (d.token?.name === name || name === undefined));
 
@@ -46,7 +47,7 @@ test('CSS parse captures source location', () => {
   const badge = usages.find((u) => u.selector === '.badge' && u.type === 'color');
   assert.equal(badge.value, '#ff6a34');
   assert.equal(badge.line, 90);
-  assert.equal(badge.file, 'deployed.css');
+  assert.equal(badge.file, 'sample.css');
 });
 
 test('splintered brand color -> high-severity inconsistent-usage', () => {

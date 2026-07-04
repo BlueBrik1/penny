@@ -11,20 +11,22 @@ import { runTui } from './tui.js';
 import { loadSourcePages, runScan, formatScanLines } from './scan.js';
 import { hooksHelpText, runAgentHooksTutorial } from './agent-hooks-tutorial.js';
 import { analyzeAllPages } from './pipeline.js';
-import { isDemoMode } from './demo-mode.js';
-import { isWebAvailable, fetchWebState, snapshotToTui } from './web-client.js';
+import { hasApiKey } from './demo-mode.js';
+import { isWebAvailable, fetchWebState, snapshotToTui, waitForWebServer, fetchWebHealth, waitForWebReady } from './web-client.js';
+import { readBootCache, writeBootCache, cacheToAnalysis } from './boot-cache.js';
 import { freePort } from './free-port.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const COLD_BOOT_MSG = 'This may take up to 5 minutes on first load.';
 
 const HELP = `Penny — interactive drift coach for design engineers.
 
 Usage:
-  penny                     Interactive browse (bundled demo, no Figma needed)
+  penny                     Interactive browse
   penny scan                Rescan sources (for agent hooks / CI)
   penny scan --quiet        One-line summary (recommended in hooks)
   penny hooks               Show agent hook setup
-  penny hooks --tutorial    Stepped CLI tutorial (same as onboarding)
+  penny hooks --tutorial    Agent hooks walkthrough
   penny view                Launch web app and open browser
   penny view --drift=<n>    Deep-link to drift index n in the web app
   penny view --page=<id>    Deep-link to page id in the web app
@@ -97,23 +99,51 @@ async function cmdScan(cfg) {
   for (const line of formatScanLines(result)) console.log(line);
 }
 
-function openWeb(extraQuery = '') {
+function openBrowser(url) {
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', shell: true }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch { /* no browser */ }
+}
+
+async function openWeb(extraQuery = '') {
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web', 'server.js');
-  const port = Number(process.env.PORT || 5178);
+  const port = Number(o.port || process.env.PORT || 5178);
   freePort(port);
   const q = extraQuery ? (extraQuery.startsWith('?') ? extraQuery : `?${extraQuery}`) : '';
-  const url = `http://localhost:${port}${q}`;
-  const child = spawn(process.execPath, [server], { stdio: 'inherit' });
-  setTimeout(() => {
-    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
-      : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
-    try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* no browser */ }
-  }, 1200);
+  const url = `http://127.0.0.1:${port}${q}`;
+  process.stdout.write('\nStarting Penny web server…\n');
+  const child = spawn(process.execPath, [server], {
+    stdio: 'inherit',
+    env: { ...process.env, PORT: String(port) },
+  });
+  const ready = await waitForWebServer(port);
+  if (ready) {
+    process.stdout.write(`\x1b[36mPenny\x1b[0m → \x1b[1m${url}\x1b[0m\n`);
+    process.stdout.write('Opening in your browser… (Ctrl+C here to stop the server)\n\n');
+    openBrowser(url);
+  } else {
+    process.stderr.write(`\n\x1b[33mCould not reach the server on port ${port}.\x1b[0m\n`);
+    process.stderr.write(`  Open manually: ${url}\n`);
+    process.stderr.write('  If the server is still loading AI scans, wait and refresh.\n\n');
+  }
   return new Promise((resolve) => child.on('exit', resolve));
 }
 
 async function main() {
   if (o.help) { console.log(HELP); return; }
+
+  const onboardingCmd = ['init', 'login', 'onboard', 'onboarding'].includes(positionals[0]);
+  if (!onboardingCmd && positionals[0] !== 'hooks' && !hasApiKey(loadConfig())) {
+    console.error('\x1b[31mAzure OpenAI API key required.\x1b[0m Run \x1b[1mpenny onboarding\x1b[0m to set up.\n');
+    process.exit(1);
+  }
+
   if (positionals[0] === 'hooks') {
     const cfg = loadConfig();
     if (o.tutorial) {
@@ -148,52 +178,93 @@ async function main() {
   let cfg = loadConfig();
   if (!configExists() && !o['list-tokens'] && process.stdin.isTTY) {
     cfg = await onboard();
-    if (cfg.quitAfterSetup) process.exit(0);
   } else {
     cfg = ensureProjectSources(cfg);
   }
 
-  if (o.css && isDemoMode(cfg)) {
-    console.error('Demo mode is limited to bundled seed pages. Run penny onboarding with an Azure OpenAI key to scan your own files.');
+  if (!hasApiKey(cfg)) {
+    console.error('\x1b[31mAzure OpenAI API key required.\x1b[0m Run \x1b[1mpenny onboarding\x1b[0m to set up.\n');
+    process.exit(1);
+  }
+
+  if (o.css && !hasApiKey(cfg)) {
+    console.error('API key required. Run penny onboarding.');
     process.exit(1);
   }
 
   const sources = loadSourcePages(cfg, o.css || null);
   if (!sources.length) {
-    console.error(isDemoMode(cfg)
-      ? 'Demo mode uses bundled seed pages — none found.'
-      : 'No sources to scan (all excluded, or none configured).');
+    console.error('No sources to scan (all excluded, or none configured). Run \x1b[1mpenny onboarding\x1b[0m.');
     return;
   }
 
   const port = Number(o.port || process.env.PORT || 5178);
 
   // Live mode: share session with the web dashboard when it's running.
-  if (!isDemoMode(cfg) && !o.local && !o.css && !o['list-tokens'] && process.stdin.isTTY) {
+  if (!o.local && !o.css && !o['list-tokens'] && process.stdin.isTTY) {
     try {
       if (await isWebAvailable(port)) {
-        const snap = await fetchWebState(port);
-        if (!snap.demoMode) {
-          const tuiData = snapshotToTui(snap, sources);
-          process.stdout.write(`\nLinked to web dashboard — CLI syncs with the browser.\n`);
-          process.stdout.write(`  http://localhost:${port}  ·  ${tuiData.problems.length} drift(s)\n\n`);
-          await runTui({
-            ...tuiData,
-            webSync: { port, sources },
-            agent: snap.agent || cfg.agent,
-            demoMode: false,
-          });
-          process.exit(0);
+        const health = await fetchWebHealth(port);
+        const instant = !!health.ready;
+        if (!instant) {
+          process.stdout.write(`\nConnecting to web dashboard — ${COLD_BOOT_MSG}\n`);
+          await waitForWebReady(port);
         }
+        const snap = await fetchWebState(port);
+        const tuiData = snapshotToTui(snap, sources);
+        process.stdout.write(instant
+          ? `\nLinked to web dashboard — synced instantly.\n`
+          : `\nLinked to web dashboard — CLI syncs with the browser.\n`);
+        process.stdout.write(`  http://localhost:${port}  ·  ${tuiData.problems.length} drift(s)\n\n`);
+        await runTui({
+          ...tuiData,
+          webSync: { port, sources },
+          agent: snap.agent || cfg.agent,
+        });
+        process.exit(0);
       }
-    } catch { /* fall through to local scan */ }
+    } catch { /* fall through to cache or local scan */ }
   }
 
-  process.stdout.write(`\nScanning ${sources.length} page(s)…\n`);
+  if (!o.local && !o.css && !o['list-tokens'] && process.stdin.isTTY) {
+    const cached = readBootCache(cfg);
+    if (cached) {
+      const analysis = cacheToAnalysis(cached, sources);
+      const driftCount = analysis.pages.reduce((n, p) => n + (p.driftCount ?? p.drifts?.length ?? 0), 0);
+      process.stdout.write(`\nLoaded cached scan — synced instantly.\n`);
+      process.stdout.write(`  ${driftCount} drift${driftCount !== 1 ? 's' : ''}\n\n`);
+      if (o['list-tokens']) {
+        for (const t of analysis.panelTokens) console.log(`${t.type.padEnd(11)} ${t.name.padEnd(28)} ${t.count ?? ''}×  ${t.nodePath || ''}`);
+        console.log(`\n${analysis.panelTokens.length} values found (${analysis.tokenMode} baseline)`);
+        return;
+      }
+      await runTui({
+        pages: sources,
+        pageResults: analysis.pages,
+        tokens: analysis.panelTokens,
+        diffTokens: analysis.diffTokens,
+        tokenMode: analysis.tokenMode,
+        agent: cfg.agent,
+        apiKey: cfg.azureOpenAiKey || process.env.AZURE_OPENAI_API_KEY || '',
+      });
+      process.exit(0);
+    }
+  }
+
+  process.stdout.write(`\nScanning ${sources.length} page(s)… ${COLD_BOOT_MSG}\n`);
   const analysis = await analyzeAllPages({ pages: sources, cfg });
+  writeBootCache(cfg, {
+      tokens: analysis.panelTokens,
+      diffTokens: analysis.diffTokens,
+      tokenMode: analysis.tokenMode,
+      pages: sources.map((s) => ({
+        id: s.id,
+        drifts: analysis.pages.find((p) => p.id === s.id)?.drifts || [],
+      })),
+  });
   const driftCount = analysis.pages.reduce((n, p) => n + (p.driftCount ?? p.drifts?.length ?? 0), 0);
   process.stdout.write(`Found ${driftCount} drift${driftCount !== 1 ? 's' : ''}.\n`);
-  if (!isDemoMode(cfg) && !o.local) {
+  if (!o.local) {
     process.stdout.write('Tip: run `penny view` in another terminal for live CLI ↔ web sync.\n');
   }
   process.stdout.write('\n');
@@ -215,7 +286,6 @@ async function main() {
     tokenMode: analysis.tokenMode,
     agent: cfg.agent,
     apiKey: apiKey || null,
-    demoMode: analysis.demoMode,
   });
   process.exit(0);
 }

@@ -2,16 +2,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { parseFigmaExport, fetchFigmaTokens } from './figma.js';
 import { computeDriftScore } from './interactive.js';
 import { loadConfig, updateConfig, resetScanState } from './config.js';
-import { analyzeAllPages, resolveSourceDefs, isDemoMode } from './pipeline.js';
-import { resolveSourcePath, PACKAGE_ROOT } from './project-paths.js';
+import { analyzeAllPages, resolveSourceDefs } from './pipeline.js';
+import { resolveSourcePath } from './project-paths.js';
 
 export function loadSourcePages(cfg, cssOverride = null) {
-  if (cssOverride && isDemoMode(cfg)) return [];
   if (cssOverride) {
     const srcPath = path.isAbsolute(cssOverride) ? cssOverride : path.join(process.cwd(), cssOverride);
     return [{ id: 'file', name: path.basename(cssOverride), file: path.basename(srcPath), path: srcPath, text: fs.readFileSync(srcPath, 'utf8'), src: fs.readFileSync(srcPath, 'utf8'), srcFile: path.basename(srcPath) }];
@@ -37,7 +35,6 @@ export function loadSourcePages(cfg, cssOverride = null) {
 }
 
 async function resolveFigmaBaseline(cfg, overrides = {}) {
-  if (isDemoMode(cfg)) return null;
   if (overrides['figma-export']) return parseFigmaExport(JSON.parse(fs.readFileSync(overrides['figma-export'], 'utf8')));
   const fileKey = overrides['figma-file'] || cfg.figmaFileKey || process.env.FIGMA_FILE_KEY;
   const token = overrides['figma-token'] || cfg.figmaToken || process.env.FIGMA_TOKEN;
@@ -49,12 +46,12 @@ async function resolveFigmaBaseline(cfg, overrides = {}) {
 export async function runLocalScan(cfg, opts = {}) {
   const sources = loadSourcePages(cfg, opts.css || null);
   if (!sources.length) {
-    return { via: 'local', total: 0, delta: null, message: null, driftScore: 100, bySeverity: { high: 0, medium: 0, low: 0 }, tokenMode: 'intrinsic', tokenCount: 0, pages: [], demoMode: isDemoMode(cfg) };
+    return { via: 'local', total: 0, delta: null, message: null, driftScore: 100, bySeverity: { high: 0, medium: 0, low: 0 }, tokenMode: 'intrinsic', tokenCount: 0, pages: [], aiLive: false };
   }
   for (const s of sources) s.text = fs.readFileSync(s.path, 'utf8'), s.src = s.text;
 
   const figmaBaseline = await resolveFigmaBaseline(cfg, opts);
-  const { pages, panelTokens, tokenMode, demoMode, aiLive } = await analyzeAllPages({
+  const { pages, panelTokens, tokenMode, aiLive } = await analyzeAllPages({
     pages: sources,
     cfg,
     figmaBaseline,
@@ -80,7 +77,7 @@ export async function runLocalScan(cfg, opts = {}) {
   if (!opts.dryRun && !opts.hard) updateConfig({ lastScanDriftCount: total });
 
   return {
-    via: demoMode ? 'demo' : aiLive ? 'ai' : 'local',
+    via: aiLive ? 'ai' : 'local',
     hard: !!opts.hard,
     total,
     delta,
@@ -89,7 +86,6 @@ export async function runLocalScan(cfg, opts = {}) {
     bySeverity,
     tokenMode,
     tokenCount: panelTokens.length,
-    demoMode,
     aiLive,
     pages: pages.map((p) => ({ id: p.id, name: p.name, file: p.file, driftCount: p.driftCount })),
   };
@@ -103,7 +99,7 @@ export async function runWebScan(port = 5178, path = '/api/scan') {
   const snap = await res.json();
   const total = (snap.pages || []).reduce((n, p) => n + (p.drifts?.length || 0), 0);
   return {
-    via: snap.demoMode ? 'demo' : snap.aiLive ? 'web' : 'web',
+    via: snap.aiLive ? 'web' : 'web',
     hard: path.includes('hard'),
     total,
     delta: snap.scanNudge?.delta ?? null,
@@ -112,7 +108,6 @@ export async function runWebScan(port = 5178, path = '/api/scan') {
     bySeverity: countSeverities((snap.pages || []).flatMap((p) => p.drifts || [])),
     tokenMode: snap.tokenMode,
     tokenCount: snap.tokens?.length ?? 0,
-    demoMode: snap.demoMode,
     aiLive: snap.aiLive,
     pages: (snap.pages || []).map((p) => ({ id: p.id, name: p.name, file: p.srcFile, driftCount: p.drifts?.length || 0 })),
   };
@@ -148,7 +143,7 @@ export async function runScan(cfg, opts = {}) {
 
 export function formatScanLines(result) {
   const sev = result.bySeverity;
-  const modeTag = result.demoMode ? ' · demo' : result.aiLive ? ' · AI' : '';
+  const modeTag = result.aiLive ? ' · AI' : '';
   const lines = [
     `${result.total} drift${result.total !== 1 ? 's' : ''} · ${result.driftScore ?? '—'}% aligned · ${result.tokenCount} tokens · ${result.tokenMode}${modeTag}`,
     `  ${sev.high} high · ${sev.medium} medium · ${sev.low} low`,

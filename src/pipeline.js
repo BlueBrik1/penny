@@ -1,36 +1,22 @@
-// Central analysis router — live AI vs demo snapshot.
-
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Central analysis router — live AI scan of configured project sources.
 
 import { parseSource } from './parse.js';
 import { analyzeUsages } from './intrinsic.js';
 import { analyzePageWithAI } from './ai-analyze.js';
 import { isRealDrift } from './diff.js';
-import { driftKey } from './fixer.js';
-import {
-  isDemoMode, resolveApiKey, loadDemoSnapshot, demoDriftsForPage,
-  demoTokens, demoTokenMode, demoSourceDefs,
-} from './demo-mode.js';
+import { isDismissed, dismissedItemsForPage } from './dismiss.js';
+import { resolveApiKey } from './demo-mode.js';
 
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-export { isDemoMode, resolveApiKey, demoSourceDefs };
+export { resolveApiKey };
 
 export function resolveSourceDefs(cfg) {
-  if (isDemoMode(cfg)) return demoSourceDefs();
-  if (cfg.sources?.length) {
-    return cfg.sources.map((s) => ({
-      id: s.id,
-      name: s.name || path.basename(s.src),
-      src: s.src,
-      html: s.html,
-      seed: false,
-    }));
-  }
-  const seed = JSON.parse(fs.readFileSync(path.join(ROOT, 'seed/pages.json'), 'utf8'));
-  return seed.map((p) => ({ id: p.id, name: p.name, src: p.css, html: p.html, seed: true }));
+  if (!cfg.sources?.length) return [];
+  return cfg.sources.map((s) => ({
+    id: s.id,
+    name: s.name || s.src,
+    src: s.src,
+    html: s.html,
+  }));
 }
 
 export async function analyzePage({
@@ -41,16 +27,9 @@ export async function analyzePage({
   apiKey,
   client,
   figmaSummary = null,
-  dismissed = new Set(),
-  demoSnapshot = null,
   cfg = {},
 }) {
-  if (isDemoMode(cfg)) {
-    const snap = demoSnapshot || loadDemoSnapshot();
-    const drifts = demoDriftsForPage(page.id, snap)
-      .filter((d) => isRealDrift(d) && !dismissed.has(driftKey(d)));
-    return drifts;
-  }
+  const filterOut = (drifts) => drifts.filter((d) => isRealDrift(d) && !isDismissed(page.id, d, cfg));
 
   const drifts = await analyzePageWithAI({
     pageId: page.id,
@@ -64,8 +43,9 @@ export async function analyzePage({
     apiKey: apiKey || resolveApiKey(cfg),
     cfg,
     client,
+    dismissedItems: dismissedItemsForPage(page.id, cfg.dismissedItems || []),
   });
-  return drifts.filter((d) => isRealDrift(d) && !dismissed.has(driftKey(d)));
+  return filterOut(drifts);
 }
 
 export async function analyzeAllPages({
@@ -75,23 +55,12 @@ export async function analyzeAllPages({
   client = null,
   opts = {},
 }) {
-  const demo = isDemoMode(cfg);
-  const snap = demo ? loadDemoSnapshot() : null;
+  const allUsages = pages.flatMap((p) => parseSource(p.src || p.text, p.srcFile || p.file));
+  const analysis = await analyzeUsages(allUsages, { figmaTokens: figmaBaseline });
+  const panelTokens = analysis.panelTokens;
+  const diffTokens = analysis.diffTokens;
+  const tokenMode = analysis.mode;
 
-  let panelTokens, diffTokens, tokenMode;
-  if (demo && snap?.tokens?.length) {
-    panelTokens = snap.tokens;
-    diffTokens = snap.diffTokens || snap.tokens;
-    tokenMode = demoTokenMode(snap);
-  } else {
-    const allUsages = pages.flatMap((p) => parseSource(p.src || p.text, p.srcFile || p.file));
-    const analysis = await analyzeUsages(allUsages, { figmaTokens: figmaBaseline });
-    panelTokens = analysis.panelTokens;
-    diffTokens = analysis.diffTokens;
-    tokenMode = analysis.mode;
-  }
-
-  const dismissed = new Set(cfg.dismissed || []);
   const apiKey = resolveApiKey(cfg);
   const figmaSummary = figmaBaseline
     ? `${figmaBaseline.length || 0} Figma tokens loaded`
@@ -107,8 +76,6 @@ export async function analyzeAllPages({
       apiKey,
       client,
       figmaSummary,
-      dismissed,
-      demoSnapshot: snap,
       cfg,
     });
     results.push({
@@ -120,5 +87,5 @@ export async function analyzeAllPages({
     });
   }
 
-  return { pages: results, panelTokens, diffTokens, tokenMode, demoMode: demo, aiLive: !demo && !!apiKey };
+  return { pages: results, panelTokens, diffTokens, tokenMode, aiLive: !!apiKey };
 }

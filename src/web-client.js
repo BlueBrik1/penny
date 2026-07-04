@@ -2,15 +2,50 @@
 
 import http from 'node:http';
 
+import { loadConfig } from './config.js';
+import { resolveSourcePath } from './project-paths.js';
+
 const DEFAULT_PORT = Number(process.env.PORT) || 5178;
 
 export async function isWebAvailable(port = DEFAULT_PORT) {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/state`, { signal: AbortSignal.timeout(1200) });
+    const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/** Poll until the web server accepts connections (may still be loading pages). */
+export async function waitForWebServer(port = DEFAULT_PORT, maxMs = 120_000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    if (await isWebAvailable(port)) return true;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+export async function fetchWebHealth(port = DEFAULT_PORT) {
+  const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(3000) });
+  if (!res.ok) throw new Error(`web health failed (${res.status})`);
+  return res.json();
+}
+
+/** Poll /api/health until the dashboard finishes its first boot. */
+export async function waitForWebReady(port = DEFAULT_PORT, maxMs = 300_000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    try {
+      const h = await fetchWebHealth(port);
+      if (h.ready) return h;
+      if (h.error) throw new Error(h.error);
+    } catch (e) {
+      if (!(await isWebAvailable(port))) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error('Timed out waiting for web dashboard');
 }
 
 export async function fetchWebState(port = DEFAULT_PORT) {
@@ -29,19 +64,32 @@ export async function webPost(port, path, body = {}) {
   return res.json();
 }
 
+/** Resolve on-disk path for a web page entry. */
+function resolvePagePath(wp, local, cfg) {
+  if (local?.path) return local.path;
+  if (local?.readPath) return local.readPath;
+  if (wp.readPath) return wp.readPath;
+  const def = (cfg.sources || []).find((s) => s.id === wp.id);
+  if (def?.src) return resolveSourcePath(cfg, def.src);
+  return null;
+}
+
 /** Map web snapshot + local file paths into TUI state. */
-export function snapshotToTui(snap, sources = []) {
+export function snapshotToTui(snap, sources = [], cfg = null) {
+  const cur = cfg || loadConfig();
   const byId = new Map(sources.map((s) => [s.id, s]));
   const pages = (snap.pages || []).map((wp) => {
     const local = byId.get(wp.id);
+    const filePath = resolvePagePath(wp, local, cur);
     return {
       id: wp.id,
       name: wp.name,
       file: wp.srcFile,
       srcFile: wp.srcFile,
-      path: local?.path ?? local?.readPath ?? null,
-      text: wp.src,
-      src: wp.src,
+      path: filePath,
+      // Prefer disk in TUI — web snapshot src can be stale or truncated during SSE.
+      text: filePath ? undefined : wp.src,
+      src: filePath ? undefined : wp.src,
       html: wp.html || '',
     };
   });

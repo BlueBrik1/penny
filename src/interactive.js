@@ -72,7 +72,7 @@ export function highlightLocations(drift) {
 
 function addSpotTarget(out, loc) {
   if (loc.syntax?.kind === 'tw-arb' || loc.syntax?.kind === 'tw-space') {
-    const raw = loc.highlight || loc.raw || '';
+    const raw = loc.raw || loc.highlight || '';
     if (raw) out.add(raw);
     return;
   }
