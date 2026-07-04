@@ -1,0 +1,408 @@
+[
+  {
+    "id": 1,
+    "category": "inconsistent-usage",
+    "type": "color",
+    "token": {
+      "name": "brand/primary",
+      "value": "#ff6b35"
+    },
+    "expected": "#ff6b35",
+    "actualValues": [
+      "#ff6b35",
+      "#ff6a34",
+      "#f9683a"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 26,
+        "selector": ".btn-primary",
+        "prop": "background",
+        "value": "#ff6b35"
+      },
+      {
+        "file": "deployed.css",
+        "line": 37,
+        "selector": ".badge",
+        "prop": "background",
+        "value": "#ff6a34"
+      },
+      {
+        "file": "deployed.css",
+        "line": 42,
+        "selector": ".hero-cta",
+        "prop": "background",
+        "value": "#f9683a"
+      }
+    ],
+    "distance": 13.918709306182093,
+    "severity": "high",
+    "why": "Token \"brand/primary\" is meant to be a single value (#ff6b35) but renders as 3 different values across the CSS, so the same intent looks different to users and no single change keeps them in sync.",
+    "fix": "Standardize on #ff6b35. Replace the divergent literals at .btn-primary (deployed.css:26), .badge (deployed.css:37), .hero-cta (deployed.css:42) with the brand/primary token so they can never drift apart again."
+  },
+  {
+    "id": 2,
+    "category": "value-drift",
+    "type": "color",
+    "token": {
+      "name": "brand/primary-dark",
+      "value": "#e2542a"
+    },
+    "expected": "#e2542a",
+    "actualValues": [
+      "#d94e28"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 33,
+        "selector": ".btn-primary:hover",
+        "prop": "background",
+        "value": "#d94e28"
+      }
+    ],
+    "distance": 19.611410501924638,
+    "severity": "medium",
+    "why": "#d94e28 is close to \"brand/primary-dark\" (#e2542a) but doesn't match it — a silent drift from the design system that erodes visual consistency.",
+    "fix": "Change #d94e28 at .btn-primary:hover (deployed.css:33) to #e2542a, ideally by referencing the brand/primary-dark token instead of a literal."
+  },
+  {
+    "id": 3,
+    "category": "off-palette",
+    "type": "color",
+    "token": null,
+    "expected": null,
+    "actualValues": [
+      "#3b82f6"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 49,
+        "selector": ".subscribe-btn",
+        "prop": "background",
+        "value": "#3b82f6"
+      }
+    ],
+    "distance": null,
+    "severity": "medium",
+    "why": "#3b82f6 has no matching design token — it lives entirely outside the color system, so it won't respond to any design-system update.",
+    "fix": "At .subscribe-btn (deployed.css:49), either switch to the nearest existing token or, if this value is intentional, promote it to a new color token in Figma."
+  },
+  {
+    "id": 4,
+    "category": "value-drift",
+    "type": "spacing",
+    "token": {
+      "name": "space/md",
+      "value": "16px"
+    },
+    "expected": "16px",
+    "actualValues": [
+      "15px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 28,
+        "selector": ".btn-primary",
+        "prop": "padding",
+        "value": "15px"
+      }
+    ],
+    "distance": 1,
+    "severity": "medium",
+    "why": "15px is close to \"space/md\" (16px) but doesn't match it — a silent drift from the design system that erodes visual consistency.",
+    "fix": "Change 15px at .btn-primary (deployed.css:28) to 16px, ideally by referencing the space/md token instead of a literal."
+  },
+  {
+    "id": 5,
+    "category": "off-scale",
+    "type": "spacing",
+    "token": null,
+    "expected": null,
+    "actualValues": [
+      "13px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 59,
+        "selector": ".banner",
+        "prop": "margin",
+        "value": "13px"
+      }
+    ],
+    "distance": null,
+    "severity": "medium",
+    "why": "13px has no matching design token — it lives entirely outside the spacing system, so it won't respond to any design-system update.",
+    "fix": "At .banner (deployed.css:59), either switch to the nearest existing token or, if this value is intentional, promote it to a new spacing token in Figma."
+  },
+  {
+    "id": 6,
+    "category": "value-drift",
+    "type": "typography",
+    "token": {
+      "name": "text/body",
+      "value": "16px",
+      "label": "400 16px/24 Inter"
+    },
+    "expected": "16px",
+    "actualValues": [
+      "17px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 21,
+        "selector": ".lead",
+        "prop": "font-size",
+        "value": "17px"
+      }
+    ],
+    "distance": 1,
+    "severity": "medium",
+    "why": "17px is close to \"text/body\" (400 16px/24 Inter) but doesn't match it — a silent drift from the design system that erodes visual consistency.",
+    "fix": "Change 17px at .lead (deployed.css:21) to 400 16px/24 Inter, ideally by referencing the text/body token instead of a literal."
+  },
+  {
+    "id": 7,
+    "category": "hardcoded",
+    "type": "color",
+    "token": {
+      "name": "neutral/surface",
+      "value": "#ffffff"
+    },
+    "expected": "#ffffff",
+    "actualValues": [
+      "#ffffff"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 6,
+        "selector": ":root",
+        "prop": "--page-bg",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 11,
+        "selector": "body",
+        "prop": "background",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 27,
+        "selector": ".btn-primary",
+        "prop": "color",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 38,
+        "selector": ".badge",
+        "prop": "color",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 43,
+        "selector": ".hero-cta",
+        "prop": "color",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 50,
+        "selector": ".subscribe-btn",
+        "prop": "color",
+        "value": "#ffffff"
+      },
+      {
+        "file": "deployed.css",
+        "line": 54,
+        "selector": ".card",
+        "prop": "background",
+        "value": "#ffffff"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "#ffffff is correct today but hardcoded (it matches \"neutral/surface\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal #ffffff at :root (deployed.css:6), body (deployed.css:11), .btn-primary (deployed.css:27), .badge (deployed.css:38), .hero-cta (deployed.css:43), .subscribe-btn (deployed.css:50), .card (deployed.css:54) with a reference to the neutral/surface token/variable."
+  },
+  {
+    "id": 8,
+    "category": "hardcoded",
+    "type": "color",
+    "token": {
+      "name": "neutral/text",
+      "value": "#1a1a2e"
+    },
+    "expected": "#1a1a2e",
+    "actualValues": [
+      "#1a1a2e"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 10,
+        "selector": "body",
+        "prop": "color",
+        "value": "#1a1a2e"
+      },
+      {
+        "file": "deployed.css",
+        "line": 16,
+        "selector": "h1",
+        "prop": "color",
+        "value": "#1a1a2e"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "#1a1a2e is correct today but hardcoded (it matches \"neutral/text\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal #1a1a2e at body (deployed.css:10), h1 (deployed.css:16) with a reference to the neutral/text token/variable."
+  },
+  {
+    "id": 9,
+    "category": "hardcoded",
+    "type": "spacing",
+    "token": {
+      "name": "space/lg",
+      "value": "24px"
+    },
+    "expected": "24px",
+    "actualValues": [
+      "24px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 44,
+        "selector": ".hero-cta",
+        "prop": "padding",
+        "value": "24px"
+      },
+      {
+        "file": "deployed.css",
+        "line": 63,
+        "selector": ".grid",
+        "prop": "gap",
+        "value": "24px"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "24px is correct today but hardcoded (it matches \"space/lg\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal 24px at .hero-cta (deployed.css:44), .grid (deployed.css:63) with a reference to the space/lg token/variable."
+  },
+  {
+    "id": 10,
+    "category": "hardcoded",
+    "type": "color",
+    "token": {
+      "name": "feedback/success",
+      "value": "#2ecc71"
+    },
+    "expected": "#2ecc71",
+    "actualValues": [
+      "#2ecc71"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 71,
+        "selector": ".success-note",
+        "prop": "color",
+        "value": "#2ecc71"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "#2ecc71 is correct today but hardcoded (it matches \"feedback/success\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal #2ecc71 at .success-note (deployed.css:71) with a reference to the feedback/success token/variable."
+  },
+  {
+    "id": 11,
+    "category": "hardcoded",
+    "type": "spacing",
+    "token": {
+      "name": "space/sm",
+      "value": "8px"
+    },
+    "expected": "8px",
+    "actualValues": [
+      "8px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 29,
+        "selector": ".btn-primary",
+        "prop": "border-radius",
+        "value": "8px"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "8px is correct today but hardcoded (it matches \"space/sm\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal 8px at .btn-primary (deployed.css:29) with a reference to the space/sm token/variable."
+  },
+  {
+    "id": 12,
+    "category": "hardcoded",
+    "type": "spacing",
+    "token": {
+      "name": "space/xl",
+      "value": "32px"
+    },
+    "expected": "32px",
+    "actualValues": [
+      "32px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 67,
+        "selector": ".section",
+        "prop": "padding",
+        "value": "32px"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "32px is correct today but hardcoded (it matches \"space/xl\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal 32px at .section (deployed.css:67) with a reference to the space/xl token/variable."
+  },
+  {
+    "id": 13,
+    "category": "hardcoded",
+    "type": "typography",
+    "token": {
+      "name": "text/heading",
+      "value": "32px",
+      "label": "700 32px/40 Inter"
+    },
+    "expected": "32px",
+    "actualValues": [
+      "32px"
+    ],
+    "locations": [
+      {
+        "file": "deployed.css",
+        "line": 17,
+        "selector": "h1",
+        "prop": "font-size",
+        "value": "32px"
+      }
+    ],
+    "distance": 0,
+    "severity": "low",
+    "why": "32px is correct today but hardcoded (it matches \"text/heading\"), so a future change to that token won't propagate here.",
+    "fix": "Replace the literal 32px at h1 (deployed.css:17) with a reference to the text/heading token/variable."
+  }
+]

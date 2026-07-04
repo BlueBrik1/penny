@@ -1,0 +1,90 @@
+// CSS fix engine: turns drift findings into concrete line edits and applies them.
+// Pure and testable — the three UI fix modes (auto / plan / accept-edits) are just
+// different policies over computeFixPlan() + applyPlan().
+//
+// Auto-fixable = value-drift and inconsistent-usage. off-palette/off-scale are advisory.
+
+export function isFixable(drift) {
+  return drift.category === 'value-drift' || drift.category === 'inconsistent-usage';
+}
+
+/** True when a plan item rewrites at least one source line (before !== after). */
+export function hasApplicableEdits(planItem) {
+  return !!planItem?.edits?.some((e) => e.before !== e.after);
+}
+
+// Stable-ish identity for a drift so a dismissal survives re-scans (the numeric id does
+// not — it's just the post-sort index). Keyed on what the drift *is*, not where it ranks.
+export function driftKey(d) {
+  const file = d.locations?.[0]?.file || '';
+  return [file, d.category, d.type, d.token?.name || '', [...(d.actualValues || [])].sort().join('|')].join('::');
+}
+
+// The canonical literal we write into the CSS (typography/spacing use the px value,
+// not the rich label).
+export function canonicalValue(drift) {
+  return drift.expected;
+}
+
+// Render the canonical value back into the location's own design language, so a Tailwind
+// class stays a Tailwind class and CSS stays CSS.
+export function renderCanonical(loc, drift) {
+  const syntax = loc.syntax || { kind: 'css' };
+  const canonical = drift.expected; // '#ff6b35' | '16px'
+  if (syntax.kind === 'tw-arb') return `${syntax.prefix}-[${canonical}]`;
+  if (syntax.kind === 'tw-space') {
+    const px = parseFloat(canonical);
+    return px % 4 === 0 ? `${syntax.prefix}-${px / 4}` : `${syntax.prefix}-[${canonical}]`;
+  }
+  return canonical; // plain CSS
+}
+
+// Build the per-location edits for one drift: prefer AI-provided edits, else deterministic.
+function editsForDrift(drift) {
+  if (drift.aiEdits?.length) {
+    return drift.aiEdits.map((e) => ({
+      line: e.line,
+      find: e.find ?? '',
+      replace: e.replace ?? '',
+      before: e.before,
+      after: e.after,
+      selector: e.selector,
+      file: e.file,
+    })).filter((e) => e.before !== e.after);
+  }
+  if (!isFixable(drift)) return [];
+  return drift.locations
+    .map((l) => ({ line: l.line, find: l.raw ?? l.value, replace: renderCanonical(l, drift), selector: l.selector, file: l.file }))
+    .filter((e) => e.find !== e.replace);
+}
+
+// css + drifts -> [{ id, token, category, edits:[{line, find, replace, before, after}] }]
+export function computeFixPlan(css, drifts) {
+  const lines = css.split('\n');
+  const plan = [];
+  for (const d of drifts) {
+    const edits = editsForDrift(d).map((e) => {
+      if (e.before != null && e.after != null) return { ...e };
+      const before = lines[e.line - 1] ?? '';
+      const after = before.replace(e.find, e.replace);
+      return { ...e, before, after };
+    });
+    if (edits.length) plan.push({ id: d.id, token: d.token?.name, category: d.category, type: d.type, edits });
+  }
+  return plan;
+}
+
+// Apply the plan (optionally only for `acceptedIds`) to the CSS text. Edits may carry an
+// `override` replacement (accept-edits "edit" action). Returns the new CSS string.
+export function applyPlan(css, plan, acceptedIds = null) {
+  const lines = css.split('\n');
+  for (const item of plan) {
+    if (acceptedIds && !acceptedIds.includes(item.id)) continue;
+    for (const e of item.edits) {
+      const i = e.line - 1;
+      if (i < 0 || i >= lines.length) continue;
+      lines[i] = lines[i].replace(e.find, e.override ?? e.replace);
+    }
+  }
+  return lines.join('\n');
+}

@@ -1,0 +1,72 @@
+<div class="settings-layout">
+  <header class="settings-header">
+    <h1>Settings</h1>
+    <p>Manage workspace preferences, scans, and integrations</p>
+  </header>
+
+  <nav class="settings-nav" aria-label="Settings sections">
+    <span class="settings-tab settings-tab-active">General</span>
+    <span class="settings-tab">Scanning</span>
+    <span class="settings-tab">API keys</span>
+    <span class="settings-tab">Billing</span>
+  </nav>
+
+  <section class="settings-section">
+    <h2>Workspace</h2>
+    <p class="hint">Basic information visible to your team</p>
+
+    <div class="field-group">
+      <label for="ws-name">Workspace name</label>
+      <input id="ws-name" type="text" value="Meridian — Product" />
+    </div>
+
+    <div class="field-group">
+      <label for="ws-url">Public URL</label>
+      <input id="ws-url" type="url" value="https://app.meridian.design" />
+    </div>
+
+    <div class="field-group">
+      <label for="plan">Plan</label>
+      <select id="plan">
+        <option>Team</option>
+        <option>Enterprise</option>
+      </select>
+      <span class="badge-plan">Team</span>
+    </div>
+  </section>
+
+  <section class="settings-section">
+    <h2>Scan behavior</h2>
+    <p class="hint">Control when Penny rescans your sources</p>
+
+    <div class="toggle-row">
+      <div>
+        <strong>Agent hook scans</strong>
+        <span>Rescan after each Claude Code or Cursor prompt</span>
+      </div>
+      <div class="toggle" aria-hidden="true"></div>
+    </div>
+
+    <div class="toggle-row">
+      <div>
+        <strong>Watch file saves</strong>
+        <span>Live rescan on CSS/JSX changes</span>
+      </div>
+      <div class="toggle toggle-off" aria-hidden="true"></div>
+    </div>
+
+    <div class="field-group" style="margin-top:20px">
+      <label for="interval">Interval fallback (minutes)</label>
+      <input id="interval" type="number" value="15" />
+    </div>
+  </section>
+
+  <section class="settings-section">
+    <h2>Anthropic API key</h2>
+    <p class="hint">Required for live AI analysis · stored locally in ~/.driftrc</p>
+    <div class="api-key-box">sk-ant-api03-••••••••••••••••••••</div>
+  </section>
+
+  <button type="button" class="btn-save">Save changes</button>
+  <button type="button" class="btn-danger">Delete workspace</button>
+</div>

@@ -1,0 +1,5 @@
+[
+  { "id": "home", "name": "Homepage", "css": "seed/deployed.css", "html": "seed/home.html" },
+  { "id": "subscription", "name": "Subscription", "css": "seed/subscription.css", "html": "seed/subscription.html" },
+  { "id": "pricing", "name": "PricingCard.jsx", "css": "seed/PricingCard.jsx" }
+]

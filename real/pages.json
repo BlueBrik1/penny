@@ -1,0 +1,7 @@
+[
+  { "id": "landing", "name": "Landing", "css": "real/landing.css", "html": "real/landing.html" },
+  { "id": "dashboard", "name": "Dashboard", "css": "real/dashboard.css", "html": "real/dashboard.html" },
+  { "id": "pricing", "name": "Pricing", "css": "real/PricingPage.jsx" },
+  { "id": "signup", "name": "Signup", "css": "real/SignupFlow.jsx" },
+  { "id": "settings", "name": "Settings", "css": "real/settings.css", "html": "real/settings.html" }
+]

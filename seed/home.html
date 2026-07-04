@@ -1,0 +1,163 @@
+<div class="demo-page">
+  <section class="demo-section">
+    <h2 class="demo-title">Typography · size drift</h2>
+    <p class="type-body">Body regular — text/body 16px ✓</p>
+    <p class="type-body-bold">Body bold — 16px weight 700</p>
+    <p class="type-wrong-body">Body drift — 17px (value-drift vs text/body)</p>
+    <h1 class="type-heading">Heading — text/heading 32px ✓</h1>
+    <p class="type-wrong-heading">Heading drift — 30px (value-drift vs text/heading)</p>
+    <p class="type-wrong-heading-31">Heading drift — 31px</p>
+    <p class="type-off-18">Off-scale type — 18px (no token)</p>
+    <p class="type-caption">Caption — 14px off-scale</p>
+    <p class="type-off-12">Micro label — 12px off-scale</p>
+    <p class="lead">Lead copy — 17px intro drift</p>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Color · brand splinter (inconsistent-usage)</h2>
+    <div class="pv-row swatch-row">
+      <span class="swatch brand-correct">#ff6b35</span>
+      <span class="swatch brand-a">#ff6a34</span>
+      <span class="swatch brand-b">#f9683a</span>
+      <span class="swatch brand-c">#ff7038</span>
+      <span class="swatch brand-d">#fe6830</span>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Color · primary-dark &amp; off-palette</h2>
+    <div class="pv-row">
+      <button class="btn-dark-wrong">Hover dark drift</button>
+      <span class="swatch off-blue">Off-palette blue</span>
+      <span class="swatch off-purple">Off-palette purple</span>
+      <span class="swatch off-teal">Off-palette teal</span>
+    </div>
+    <div class="pv-row">
+      <span class="swatch success-correct">Success ✓</span>
+      <span class="swatch success-wrong">Success drift</span>
+      <span class="swatch muted-gray">Gray off-palette</span>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Spacing · scale &amp; off-scale</h2>
+    <div class="space-grid">
+      <div class="space-box space-sm">8px sm ✓</div>
+      <div class="space-box space-md">16px md ✓</div>
+      <div class="space-box space-md-wrong">15px md drift</div>
+      <div class="space-box space-lg">24px lg ✓</div>
+      <div class="space-box space-xl">32px xl ✓</div>
+      <div class="space-box space-off-13">13px off-scale</div>
+      <div class="space-box space-off-20">20px off-scale</div>
+      <div class="space-box space-off-10">10px off-scale</div>
+    </div>
+    <div class="gap-demo">
+      <div class="gap-cell">gap 20px drift</div>
+      <div class="gap-cell">gap 20px drift</div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Button size</h2>
+    <div class="pv-row">
+      <button class="btn-primary btn-size-sm">Small 8px</button>
+      <button class="btn-primary btn-size-md">Medium 15px drift</button>
+      <button class="btn-primary btn-size-lg">Large 24px</button>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Button shape · radius drift</h2>
+    <div class="pv-row">
+      <button class="btn-primary btn-shape-soft">4px soft</button>
+      <button class="btn-primary btn-shape-md">8px token</button>
+      <button class="btn-primary btn-shape-pill">Pill 999px</button>
+      <button class="btn-primary btn-shape-wrong">6px off-scale</button>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Brand &amp; actions</h2>
+    <div class="pv-row">
+      <button class="btn-primary">Get started</button>
+      <span class="badge">New badge</span>
+    </div>
+    <div class="pv-row">
+      <div class="hero-cta">Start free trial</div>
+      <button class="subscribe-btn">Subscribe blue</button>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Layout &amp; feedback</h2>
+    <div class="card"><b>Feature card</b><p>16px padding on token.</p></div>
+    <div class="banner">Banner — 13px margin off-scale</div>
+    <div class="grid grid-drift"><div></div><div></div><div></div></div>
+    <div class="section"><b>Sidebar — 32px xl padding</b></div>
+    <p class="success-note">&#10003; Success green exact token</p>
+    <p class="success-note-wrong">&#10003; Success green drift</p>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Typography · full scale (off-scale)</h2>
+    <div class="type-ramp">
+      <span class="type-r-11">11px label</span>
+      <span class="type-r-13">13px section</span>
+      <span class="type-r-15">15px subhead</span>
+      <span class="type-r-19">19px lead drift</span>
+      <span class="type-r-20">20px display drift</span>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Primary-dark · inconsistent usage</h2>
+    <div class="pv-row">
+      <button class="btn-dark-a">Dark A</button>
+      <button class="btn-dark-b">Dark B</button>
+      <button class="btn-dark-c">Dark C</button>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Radius · shape drift</h2>
+    <div class="radius-row">
+      <div class="radius-box radius-4">4px</div>
+      <div class="radius-box radius-6">6px off</div>
+      <div class="radius-box radius-8">8px token</div>
+      <div class="radius-box radius-12">12px off</div>
+      <div class="radius-box radius-pill">pill</div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Margin · rhythm drift</h2>
+    <div class="margin-stack">
+      <div class="margin-item margin-14">14px margin off-scale</div>
+      <div class="margin-item margin-18">18px margin off-scale</div>
+      <div class="margin-item margin-22">22px lg drift</div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Surface · neutral drift</h2>
+    <div class="pv-row">
+      <div class="surface-token">Surface token #fff</div>
+      <div class="surface-drift">Surface drift #fafafa</div>
+      <div class="surface-warm">Warm tint #fff7ed</div>
+    </div>
+    <div class="pv-row border-row">
+      <div class="border-chip border-gray">Border #e4e7ec</div>
+      <div class="border-chip border-muted">Muted #5b6472</div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2 class="demo-title">Extra off-palette</h2>
+    <div class="pv-row swatch-row">
+      <span class="swatch off-indigo">Indigo</span>
+      <span class="swatch off-rose">Rose</span>
+      <span class="swatch off-amber">Amber</span>
+      <span class="swatch off-slate">Slate</span>
+    </div>
+  </section>
+</div>

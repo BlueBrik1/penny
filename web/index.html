@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#111111" />
+  <title>penny.</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Two-tone scheme: one background (#111111), one off-white for everything else.
+    tailwind.config = { darkMode: 'class', theme: { extend: {
+      colors: { ink: '#111111', paper: '#ede9df' },
+      fontFamily: { sans: ['AppFont', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+    } } };
+  </script>
+  <style>
+    @font-face { font-family:'AppFont'; src:url('/fonts/main.woff2') format('woff2'); font-weight:100 900; font-display:swap; }
+    html, body, #root { height:100%; overflow:hidden; }
+    body { background:#111111; color:#ede9df; font-family:'AppFont', ui-sans-serif, system-ui, sans-serif; margin:0; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+    /* Hide scrollbars everywhere (scroll still works) ... */
+    * { scrollbar-width: none; -ms-overflow-style: none; }
+    *::-webkit-scrollbar { display: none; }
+    /* ... except inside code blocks, which keep a slim scrollbar. */
+    .code-scroll { scrollbar-width: thin; scrollbar-color: rgba(237,233,223,0.18) transparent; }
+    .code-scroll::-webkit-scrollbar { display: block; width:8px; height:8px; }
+    .code-scroll::-webkit-scrollbar-track { background: transparent; }
+    .code-scroll::-webkit-scrollbar-thumb { background: rgba(237,233,223,0.18); border-radius:6px; }
+
+    /* Enter transitions fire on mount only (no ambient/looping animation). */
+    @keyframes enter { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+    @keyframes cinemaPulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.85; transform:scale(1.05); } }
+    @keyframes cinemaToExpected { from { box-shadow:0 0 0 0 transparent; } 50% { box-shadow:0 0 0 4px rgba(237,233,223,0.4); } to { box-shadow:0 0 0 0 transparent; } }
+    @keyframes fixPulse { 0%,100% { outline-color: #82d69a; } 50% { outline-color: transparent; box-shadow: 0 0 12px #82d69a; } }
+    @keyframes scanBar { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+    @keyframes scanPulse { 0%,100% { opacity: 0.65; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1); } }
+    @keyframes scanRing { 0% { transform: scale(0.85); opacity: 0.35; } 100% { transform: scale(1.35); opacity: 0; } }
+    .scan-bar { animation: scanBar 1.6s ease-in-out infinite; }
+    .scan-pulse { animation: scanPulse 2.2s ease-in-out infinite; }
+    .scan-ring { animation: scanRing 2s ease-out infinite; }
+    .enter { animation: enter 200ms ease-out both; }
+    .success-check { animation: successPop 200ms ease-out both; }
+    /* Selection highlights fade when they change; solid colors only, no gradients. */
+    .hl { transition: background-color 160ms ease-out; }
+    .sync-now, .sync-now * { transition: none !important; }
+    .tutorial-spotlight-target { position: relative; z-index: 9997; }
+  </style>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+</head>
+<body>
+  <div id="root" class="min-h-screen"></div>
+  <script type="text/babel" data-type="module" data-presets="react" src="/app.jsx"></script>
+</body>
+</html>

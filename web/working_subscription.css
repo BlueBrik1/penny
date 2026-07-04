@@ -1,0 +1,90 @@
+/* Subscription kitchen-sink — unique drifts layered on shared token set. */
+
+body { color: #1a1a2e; background: #ffffff; font-size: 16px; font-weight: 400; line-height: 1.5; }
+.demo-page { max-width: 760px; }
+.demo-section { margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid #e4e7ec; }
+.demo-title {
+  font-size: 13px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #5b6472; margin: 0 0 14px;
+}
+
+.type-body { font-size: 16px; margin: 0 0 6px; }
+.type-body-bold { font-size: 16px; font-weight: 700; margin: 0 0 6px; }
+.type-off-15 { font-size: 15px; margin: 0 0 6px; color: #5b6472; }
+.type-caption { font-size: 14px; color: #5b6472; margin: 0 0 10px; }
+
+.sub-hero { font-size: 30px; font-weight: 700; color: #1a1a2e; margin: 0 0 8px; }
+.lead { font-size: 16px; color: #5b6472; margin: 0 0 12px; }
+
+.swatch-row { flex-wrap: wrap; gap: 10px; }
+.swatch {
+  display: inline-block; padding: 10px 14px; border-radius: 8px;
+  color: #fff; font-size: 12px; font-weight: 600;
+}
+.brand-correct { background: #ff6b35; }
+.brand-drift { background: #ff7038; }
+.off-blue { background: #3b82f6; }
+.off-coral { background: #f97316; }
+
+.space-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.space-box {
+  background: #fff; border: 1px solid #e4e7ec; border-radius: 8px;
+  font-size: 11px; display: inline-block;
+}
+.space-md { padding: 16px; }
+.space-card-wrong { padding: 20px; }
+.space-off-14 { padding: 14px; }
+
+button { border: 0; color: #fff; font-family: inherit; line-height: 1.2; cursor: default; }
+.cta-subscribe {
+  background: #ff7038; color: #ffffff; padding: 16px;
+  border-radius: 8px; font-weight: 600;
+}
+.cta-wrong { background: #ff6a34; }
+.btn-size-sm { padding: 8px 12px; font-size: 14px; border-radius: 8px; }
+.btn-size-md { padding: 16px 20px; font-size: 16px; border-radius: 8px; }
+.btn-size-lg { padding: 22px 28px; font-size: 16px; border-radius: 8px; }
+.btn-shape-soft { padding: 16px 20px; border-radius: 4px; }
+.btn-shape-md { padding: 16px 20px; border-radius: 8px; }
+.btn-shape-pill { padding: 16px 24px; border-radius: 999px; }
+
+.pv-cards { display: flex; gap: 20px; flex-wrap: wrap; }
+.plan-card {
+  background: #ffffff; padding: 20px; border-radius: 8px;
+  border: 1px solid #e4e7ec; min-width: 170px;
+}
+.plan-card-popular { border-color: #3b82f6; }
+.plan-name { font-size: 16px; font-weight: 700; }
+.price { font-size: 32px; font-weight: 700; color: #1a1a2e; margin: 8px 0; }
+.price-wrong { font-size: 30px; }
+.cta-subscribe { margin-top: 16px; }
+
+.badge-popular {
+  background: #3b82f6; color: #ffffff; padding: 8px;
+  border-radius: 8px; font-size: 12px; font-weight: 700;
+  display: inline-block; margin-bottom: 8px;
+}
+
+.footer-note { color: #2ecc71; font-weight: 600; margin-top: 16px; }
+.footer-note-wrong { color: #27ae60; font-weight: 600; margin-top: 6px; }
+
+.radius-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.radius-box {
+  width: 64px; height: 48px; background: #ff7038; color: #fff;
+  font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+}
+.radius-6 { border-radius: 6px; }
+.radius-12 { border-radius: 12px; }
+.radius-pill { border-radius: 999px; width: 80px; }
+
+.margin-stack { display: flex; flex-direction: column; }
+.margin-item {
+  background: #fff; border: 1px solid #e4e7ec; padding: 10px 14px;
+  border-radius: 8px; font-size: 12px;
+}
+.margin-13 { margin-bottom: 13px; }
+.margin-18 { margin-bottom: 18px; }
+
+.off-indigo { background: #4f46e5; }
+.off-rose { background: #e11d48; }
+.btn-dark-drift { background: #de4f26; padding: 12px 16px; border-radius: 8px; font-weight: 600; }

@@ -1,0 +1,19 @@
+{
+  "name": "token-drift-detector",
+  "version": "1.0.0",
+  "description": "Penny — interactive drift coach for design engineers. Diffs Figma tokens against code with guided tour, cinema, and voice.",
+  "type": "module",
+  "bin": {
+    "penny": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "demo": "node web/server.js",
+    "web": "node web/server.js",
+    "test": "node --test",
+    "snapshot": "node scripts/generate-demo-snapshot.js"
+  },
+  "dependencies": {
+    "postcss": "^8.4.47"
+  }
+}
