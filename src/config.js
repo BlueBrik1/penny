@@ -50,6 +50,21 @@ export function configExists() {
   return fs.existsSync(CONFIG_PATH);
 }
 
+/** Agent hooks (Cursor / Claude Code stop) should only trigger scans in agent mode. */
+export function shouldRunAgentHookScan(cfg = loadConfig()) {
+  return cfg.scanMode === 'agent';
+}
+
+/** File-watch rescans — watch + autonomous only. */
+export function shouldWatchScan(cfg = loadConfig()) {
+  return cfg.scanMode === 'watch' || cfg.scanMode === 'autonomous';
+}
+
+/** Timer rescans — interval mode only. */
+export function shouldIntervalScan(cfg = loadConfig()) {
+  return cfg.scanMode === 'interval';
+}
+
 export function loadConfig() {
   try {
     const cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };

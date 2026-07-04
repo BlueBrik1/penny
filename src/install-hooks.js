@@ -4,13 +4,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOOK_SCRIPT = `#!/usr/bin/env node
-// Penny agent hook — rescan after each agent turn (always exit 0).
+// Penny agent hook — rescan after each agent turn when scanMode is 'agent' (always exit 0).
 import { spawnSync } from 'node:child_process';
-spawnSync('penny', ['scan', '--quiet'], {
-  stdio: 'inherit',
-  env: process.env,
-  shell: process.platform === 'win32',
-});
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+function scanMode() {
+  const rc = process.env.DRIFTRC || path.join(os.homedir(), '.driftrc');
+  try { return JSON.parse(fs.readFileSync(rc, 'utf8')).scanMode || 'ondemand'; }
+  catch { return 'ondemand'; }
+}
+
+if (scanMode() === 'agent') {
+  spawnSync('penny', ['scan', '--quiet'], {
+    stdio: 'inherit',
+    env: process.env,
+    shell: process.platform === 'win32',
+  });
+}
 process.exit(0);
 `;
 

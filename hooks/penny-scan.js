@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Agent hook entrypoint — always exit 0 (never block the agent).
+// Only runs when scanMode is 'agent' in ~/.driftrc (ondemand / watch / interval skip).
 // Claude Code Stop: reads stdin JSON; skips when stop_hook_active is true.
 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { loadConfig, shouldRunAgentHookScan } from '../src/config.js';
 
 async function main() {
   try {
@@ -17,13 +20,17 @@ async function main() {
     }
   } catch { /* no stdin */ }
 
+  if (!shouldRunAgentHookScan(loadConfig())) {
+    process.exit(0);
+  }
+
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli.js');
-  const r = spawnSync(process.execPath, [cli, 'scan', '--quiet'], {
+  spawnSync(process.execPath, [cli, 'scan', '--quiet'], {
     cwd: path.join(path.dirname(fileURLToPath(import.meta.url)), '..'),
     stdio: 'inherit',
     env: process.env,
   });
-  process.exit(r.status === 0 ? 0 : 0);
+  process.exit(0);
 }
 
 function readStdin() {

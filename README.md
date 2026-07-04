@@ -301,6 +301,8 @@ Choosing **agent** mode during onboarding installs hooks into `.claude/settings.
 
 Penny can rescan after every AI coding session so drift counts stay current while you pair with Claude Code or Cursor.
 
+**Important:** Hooks only trigger scans when `scanMode` is **`agent`** in `~/.driftrc`. In **on demand** mode, the hook script exits immediately — rescans happen only when you click Rescan or run `penny scan` yourself.
+
 ```bash
 penny hooks              # installation paths and manual test commands
 penny hooks --tutorial   # step-by-step walkthrough

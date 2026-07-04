@@ -20,7 +20,7 @@ import { parseSource } from '../src/parse.js';
 import { analyzeUsages } from '../src/intrinsic.js';
 import { computeFixPlan, applyPlan } from '../src/fixer.js';
 import { appendDismissItem, dismissedCount, recordDismissItem } from '../src/dismiss.js';
-import { loadConfig, updateConfig, configExists, ensureProjectSources } from '../src/config.js';
+import { loadConfig, updateConfig, configExists, ensureProjectSources, shouldWatchScan, shouldIntervalScan } from '../src/config.js';
 import { computeDriftScore, deepLinkCmd, webDeepLink } from '../src/interactive.js';
 import { analyzePage, resolveSourceDefs, resolveApiKey } from '../src/pipeline.js';
 import { detectPreviewKind, companionHtmlPath, langFromPreviewKind, resolvePreviewTarget } from '../src/preview.js';
@@ -549,16 +549,20 @@ const server = http.createServer((req, res) => {
 // --- watch / interval scanning ------------------------------------------------
 function startScanning() {
   // 'watch' rescans on save; 'autonomous' also auto-applies every fixable drift.
-  if (state.scanMode === 'watch' || state.scanMode === 'autonomous') {
+  // Callbacks re-read scanMode so a mode switch in ~/.driftrc stops stray rescans without restart.
+  if (shouldWatchScan(loadConfig())) {
     let t = null;
     const rescan = (page) => {
       clearTimeout(t);
       t = setTimeout(async () => {
+        refreshRuntimeConfig();
+        const cur = loadConfig();
+        if (!shouldWatchScan(cur)) return;
         try {
           page.src = fs.readFileSync(page.readPath, 'utf8');
           refreshAnalysis();
           await recomputePage(page);
-          if (state.scanMode === 'autonomous' && autoFix(page)) await recomputePage(page);
+          if (cur.scanMode === 'autonomous' && autoFix(page)) await recomputePage(page);
           recordScanDelta();
           broadcast();
         } catch { /* file mid-write; next event covers it */ }
@@ -570,8 +574,10 @@ function startScanning() {
       try { fs.watchFile(p.readPath, { interval: 400 }, (cur, prev) => { if (cur.mtimeMs !== prev.mtimeMs) rescan(p); }); }
       catch { /* unwatchable path */ }
     }
-  } else if (state.scanMode === 'interval') {
+  } else if (shouldIntervalScan(loadConfig())) {
     setInterval(async () => {
+      refreshRuntimeConfig();
+      if (!shouldIntervalScan(loadConfig())) return;
       if (state.live.figma) await loadFigmaOptional();
       refreshAnalysis();
       for (const p of state.pages) {
