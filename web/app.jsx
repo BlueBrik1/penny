@@ -7,6 +7,7 @@ import {
 import { collectMapMarkers, renderMapInIframe, clearMapInIframe, scrollDriftIntoView, renderSpotlightInIframe, clearSpotlightInIframe, spotlightMarkersFromDrift } from '/shared/drift-map.js';
 import { buildPreviewDocument, previewSandbox, previewKindLabel, detectPreviewKind, buildPulseCss, PREVIEW_KIND } from '/shared/preview.js';
 import { normalizePickedElement, renderElementSpotlightInDoc, clearElementSpotlightInDoc, describePickedElement, resolvePickTarget } from '/shared/element-highlight.js';
+import { appendToHead, docReady } from '/shared/preview-dom.js';
 
 async function apiPost(path, body = {}) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -99,9 +100,22 @@ function Win({ title, right, children, className = '', style = {} }) {
     </div>
   );
 }
+function displayValue(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number') return String(v);
+  if (typeof v === 'object') {
+    if (typeof v.backgroundColor === 'string') return v.backgroundColor;
+    if (typeof v.color === 'string') return v.color;
+    if (typeof v.fontSize === 'string') return v.fontSize;
+    const first = Object.values(v).find((x) => typeof x === 'string');
+    return first ?? '';
+  }
+  return String(v);
+}
 function Swatch({ value, size = 14 }) {
-  if (!value || !/^#|^rgb/.test(value)) return null;
-  return <span className="inline-block rounded-sm align-middle shrink-0" style={{ width: size, height: size, background: value, border: `1px solid ${paper(0.35)}` }} />;
+  const v = displayValue(value);
+  if (!v || !/^#|^rgb/.test(v)) return null;
+  return <span className="inline-block rounded-sm align-middle shrink-0" style={{ width: size, height: size, background: v, border: `1px solid ${paper(0.35)}` }} />;
 }
 function TokenGlyph({ t, size = 14 }) {
   if (t.type === 'color') return <Swatch value={t.color || t.value} size={size} />;
@@ -115,7 +129,8 @@ function TokenGlyph({ t, size = 14 }) {
   return null;
 }
 function Chip({ type, value }) {
-  return <span className="inline-flex items-center gap-1.5 mr-2 mb-1 px-1.5 py-0.5 rounded" style={{ background: paper(0.06) }}>{type === 'color' && <Swatch value={value} />}<code className="mono text-[12px]">{value}</code></span>;
+  const v = displayValue(value);
+  return <span className="inline-flex items-center gap-1.5 mr-2 mb-1 px-1.5 py-0.5 rounded" style={{ background: paper(0.06) }}>{type === 'color' && <Swatch value={v} />}<code className="mono text-[12px]">{v}</code></span>;
 }
 
 function countSeverities(drifts) {
@@ -502,80 +517,100 @@ function ElementPickerOverlay({ iframeRef, enabled, selected, onSelect, usePostM
       };
     }
 
-    const doc = iframeDoc(iframeRef.current);
-    if (!doc) return undefined;
-
     let hoverEl = null;
     let selectedEl = null;
+    let boundDoc = null;
     const styleId = 'penny-picker-style-inline';
-    if (!doc.getElementById(styleId)) {
-      const st = doc.createElement('style');
-      st.id = styleId;
-      st.textContent = `
+    let moveHandler = null;
+    let clickHandler = null;
+
+    const teardown = (doc) => {
+      if (!doc) return;
+      doc.documentElement.style.cursor = '';
+      if (moveHandler) doc.removeEventListener('mousemove', moveHandler, true);
+      if (clickHandler) doc.removeEventListener('click', clickHandler, true);
+      moveHandler = null;
+      clickHandler = null;
+      if (hoverEl) hoverEl.classList.remove(PICKER_HOVER);
+      if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
+      hoverEl = null;
+      selectedEl = null;
+      doc.getElementById(styleId)?.remove();
+    };
+
+    const bind = () => {
+      const doc = iframeDoc(iframeRef.current);
+      if (!docReady(doc)) return;
+      if (boundDoc) teardown(boundDoc);
+      boundDoc = doc;
+
+      if (!doc.getElementById(styleId)) {
+        const st = doc.createElement('style');
+        st.id = styleId;
+        st.textContent = `
         .${PICKER_HOVER} { outline: 2px solid #4c9be8 !important; outline-offset: 2px !important; cursor: crosshair !important; }
         .${PICKER_SELECTED} { outline: 3px solid #82d69a !important; outline-offset: 2px !important; box-shadow: 0 0 0 4px rgba(130,214,154,0.35) !important; }
       `;
-      doc.head.appendChild(st);
-    }
-
-    const setHover = (el) => {
-      if (hoverEl && hoverEl !== el) hoverEl.classList.remove(PICKER_HOVER);
-      hoverEl = el;
-      if (hoverEl && hoverEl !== selectedEl) hoverEl.classList.add(PICKER_HOVER);
-    };
-    const setSelected = (el) => {
-      if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
-      selectedEl = el;
-      if (selectedEl) {
-        selectedEl.classList.add(PICKER_SELECTED);
-        if (hoverEl === selectedEl) hoverEl.classList.remove(PICKER_HOVER);
+        if (!appendToHead(doc, st)) return;
       }
-    };
 
-    const targetFromEvent = (e) => {
-      let el = e.target;
-      while (el && el !== doc.documentElement) {
-        if (el.nodeType === 1 && el.id !== styleId) return el;
-        el = el.parentElement;
+      const setHover = (el) => {
+        if (hoverEl && hoverEl !== el) hoverEl.classList.remove(PICKER_HOVER);
+        hoverEl = el;
+        if (hoverEl && hoverEl !== selectedEl) hoverEl.classList.add(PICKER_HOVER);
+      };
+      const setSelected = (el) => {
+        if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
+        selectedEl = el;
+        if (selectedEl) {
+          selectedEl.classList.add(PICKER_SELECTED);
+          if (hoverEl === selectedEl) hoverEl.classList.remove(PICKER_HOVER);
+        }
+      };
+
+      const targetFromEvent = (e) => {
+        let el = e.target;
+        while (el && el !== doc.documentElement) {
+          if (el.nodeType === 1 && el.id !== styleId) return el;
+          el = el.parentElement;
+        }
+        return null;
+      };
+
+      if (selected?.selector) {
+        try {
+          const el = doc.querySelector(selected.selector);
+          if (el) setSelected(el);
+        } catch { /* ignore */ }
       }
-      return null;
+
+      moveHandler = (e) => {
+        const el = resolvePickTarget(targetFromEvent(e));
+        if (el && el !== selectedEl) setHover(el);
+      };
+      clickHandler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const el = resolvePickTarget(targetFromEvent(e));
+        if (!el) return;
+        onSelect(describePickedElement(el));
+        setSelected(el);
+        setHover(null);
+      };
+
+      doc.documentElement.style.cursor = 'crosshair';
+      doc.addEventListener('mousemove', moveHandler, true);
+      doc.addEventListener('click', clickHandler, true);
     };
 
-    if (selected?.selector) {
-      try {
-        const el = doc.querySelector(selected.selector);
-        if (el) setSelected(el);
-      } catch { /* ignore */ }
-    }
-
-    const onMove = (e) => {
-      const el = resolvePickTarget(targetFromEvent(e));
-      if (el && el !== selectedEl) setHover(el);
-    };
-    const onClick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const el = resolvePickTarget(targetFromEvent(e));
-      if (!el) return;
-      onSelect(describePickedElement(el));
-      setSelected(el);
-      setHover(null);
-    };
-
-    doc.documentElement.style.cursor = 'crosshair';
-    doc.addEventListener('mousemove', onMove, true);
-    doc.addEventListener('click', onClick, true);
-
+    bind();
     const iframe = iframeRef.current;
-    iframe?.addEventListener('load', () => { /* re-bind on load handled by effect deps */ });
+    iframe?.addEventListener('load', bind);
 
     return () => {
-      doc.documentElement.style.cursor = '';
-      doc.removeEventListener('mousemove', onMove, true);
-      doc.removeEventListener('click', onClick, true);
-      if (hoverEl) hoverEl.classList.remove(PICKER_HOVER);
-      if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
-      doc.getElementById(styleId)?.remove();
+      iframe?.removeEventListener('load', bind);
+      teardown(boundDoc || iframeDoc(iframeRef.current));
+      boundDoc = null;
     };
   }, [enabled, selected?.selector, onSelect, usePostMessage, contentKey, iframeRef]);
 
@@ -739,9 +774,9 @@ function RenderedWindow({ iframeRef, page, highlightDrift, mapOn, pulseSelectors
 
 function Cinema({ drift }) {
   if (!drift) return null;
-  const expected = drift.expected ?? drift.token?.value;
+  const expected = displayValue(drift.expected ?? drift.token?.value);
   const displayExpected = drift.type === 'typography' && drift.token?.label ? drift.token.label : expected;
-  const found = drift.actualValues ?? [];
+  const found = (drift.actualValues ?? []).map(displayValue).filter(Boolean);
   if (drift.type === 'color' && displayExpected && found.length) {
     const multi = found.length > 1;
     const swatch = (value, label, highlight) => (
@@ -877,7 +912,7 @@ function ProblemPanel({ n, total, drift, onPrev, onNext, groupLabel }) {
           {drift.expected != null && drift.category !== 'off-palette' && drift.category !== 'off-scale' && (
             <div><span className="inline-block w-[74px]" style={{ color: paper(0.55) }}>expected</span><Chip type={drift.type} value={drift.type === 'typography' && drift.token?.label ? drift.token.label : drift.expected} /></div>
           )}
-          <div><span className="inline-block w-[74px] align-top" style={{ color: paper(0.55) }}>found</span>{drift.actualValues.map((v) => <Chip key={v} type={drift.type} value={v} />)}</div>
+          <div><span className="inline-block w-[74px] align-top" style={{ color: paper(0.55) }}>found</span>{drift.actualValues.map((v, i) => <Chip key={`${displayValue(v)}-${i}`} type={drift.type} value={v} />)}</div>
           {(drift.elementName || drift.locations?.[0]?.elementName) && (
             <p><span style={{ color: paper(0.55) }}>element&nbsp;</span>{drift.elementName || drift.locations[0].elementName}</p>
           )}
@@ -922,7 +957,7 @@ function RefreshIcon() {
 
 function agentPrompt(page, drift) {
   const where = drift.locations.map((l) => `  - ${l.file}:${l.line}  ${l.selector}  (${l.raw})`).join('\n');
-  return `Fix this design-token drift in ${page.srcFile}.\n\nType: ${drift.type} (${drift.category})\nExpected: ${drift.expected ?? 'n/a'}\nFound: ${drift.actualValues.join(', ')}\nElement: ${drift.elementName || drift.locations[0]?.elementName || 'n/a'}\nLocations:\n${where}\n\nProblem: ${drift.problem || drift.why || ''}\nSolution: ${drift.solution || drift.fix || ''}`;
+  return `Fix this design-token drift in ${page.srcFile}.\n\nType: ${drift.type} (${drift.category})\nExpected: ${displayValue(drift.expected) || 'n/a'}\nFound: ${(drift.actualValues ?? []).map(displayValue).join(', ')}\nElement: ${drift.elementName || drift.locations[0]?.elementName || 'n/a'}\nLocations:\n${where}\n\nProblem: ${drift.problem || drift.why || ''}\nSolution: ${drift.solution || drift.fix || ''}`;
 }
 
 function FixPanel({ active, drift, plan, curPlan, busy, applying, agentName, onApplyThis, onApplyAll, onApplyGroup, onAsk, onDismiss, onRestore, onRevert, dismissed, groupCount, groupApplicable }) {
@@ -1192,7 +1227,7 @@ function App() {
     [heatmapOn, active?.drifts],
   );
   const mapMarkers = useMemo(() => collectMapMarkers(mapDrifts), [mapDrifts]);
-  const previewContentKey = `${active?.id ?? ''}-${active?.src?.length ?? 0}-${heatmapOn}-${previewRefresh}`;
+  const previewContentKey = `${active?.id ?? ''}-${previewRefresh}-${(active?.src?.length ?? 0)}-${active?.src?.slice(0, 40) ?? ''}`;
 
   /** Persisted on creative drifts — highlight whenever that drift is selected in tech mode. */
   const creativeHighlightElement = useMemo(() => {
@@ -1349,6 +1384,8 @@ function App() {
     setApplying(false);
     setInlineEdits({});
     bumpPreview();
+    if (next.fixUnchanged) flash('Fix did not change the file — source may have drifted. Try Rescan.');
+    else flash('Applied — source saved.');
     if (pulse.size) {
       setPulseSelectors(pulse);
       setTimeout(() => setPulseSelectors(new Set()), 2500);
@@ -1757,4 +1794,5 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+const rootEl = document.getElementById('root');
+if (rootEl) createRoot(rootEl).render(<App />);

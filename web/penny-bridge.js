@@ -49,6 +49,26 @@
     try { return [...document.querySelectorAll(marker.value)]; } catch { return []; }
   }
 
+  function docBody() {
+    return document.body || null;
+  }
+
+  function docHead() {
+    return document.head || document.documentElement || null;
+  }
+
+  function appendToBody(node) {
+    const body = docBody();
+    if (!body || !node) return false;
+    try { body.appendChild(node); return true; } catch { return false; }
+  }
+
+  function appendToHead(node) {
+    const head = docHead();
+    if (!head || !node) return false;
+    try { head.appendChild(node); return true; } catch { return false; }
+  }
+
   function clearSpotlight() {
     document.getElementById(SPOT_LAYER)?.remove();
     document.getElementById(SPOT_DIM)?.remove();
@@ -109,13 +129,15 @@
   }
 
   function paintElementBox(el) {
+    const body = docBody();
+    if (!body) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return false;
     const dim = document.createElement('div');
     dim.id = EL_SPOT_DIM;
     dim.setAttribute('aria-hidden', 'true');
     dim.style.cssText = 'position:fixed;inset:0;background:rgba(17,17,19,0.68);z-index:2147483645;pointer-events:none';
-    document.body.appendChild(dim);
+    if (!appendToBody(dim)) return false;
     const layer = document.createElement('div');
     layer.id = EL_SPOT_LAYER;
     layer.setAttribute('aria-hidden', 'true');
@@ -125,7 +147,10 @@
       border:3px solid #fff;border-radius:6px;box-sizing:border-box;pointer-events:none;
       box-shadow:0 0 0 1px rgba(0,0,0,0.15),0 0 0 6px rgba(255,255,255,0.92),0 0 28px 10px rgba(255,255,255,0.55),0 14px 40px rgba(0,0,0,0.35)`;
     layer.appendChild(box);
-    document.body.appendChild(layer);
+    if (!appendToBody(layer)) {
+      dim.remove();
+      return false;
+    }
     return true;
   }
 
@@ -149,12 +174,12 @@
 
   function applySpotlight(markers) {
     clearSpotlight();
-    if (!markers?.length) return;
+    if (!markers?.length || !docBody()) return;
     const dim = document.createElement('div');
     dim.id = SPOT_DIM;
     dim.setAttribute('aria-hidden', 'true');
     dim.style.cssText = 'position:fixed;inset:0;background:rgba(17,17,19,0.68);z-index:2147483645;pointer-events:none';
-    document.body.appendChild(dim);
+    if (!appendToBody(dim)) return;
 
     const layer = document.createElement('div');
     layer.id = SPOT_LAYER;
@@ -175,12 +200,12 @@
         layer.appendChild(box);
       }
     }
-    if (layer.childNodes.length) document.body.appendChild(layer);
+    if (layer.childNodes.length) appendToBody(layer);
   }
 
   function applyMap(markers) {
     clearMap();
-    if (!markers?.length) return;
+    if (!markers?.length || !docBody()) return;
     const layer = document.createElement('div');
     layer.id = MAP_LAYER;
     layer.setAttribute('aria-hidden', 'true');
@@ -203,7 +228,7 @@
         layer.appendChild(badge);
       }
     }
-    if (layer.childNodes.length) document.body.appendChild(layer);
+    if (layer.childNodes.length) appendToBody(layer);
   }
 
   let lastMode = 'spotlight';
@@ -221,6 +246,7 @@
   }
 
   function rerender() {
+    if (!docBody()) return;
     if (pickerOn) return;
     if (lastElementDesc) {
       applyElementHighlight(lastElementDesc);
@@ -245,7 +271,7 @@
       .${PICKER_HOVER} { outline: 2px solid #4c9be8 !important; outline-offset: 2px !important; cursor: crosshair !important; }
       .${PICKER_SELECTED} { outline: 3px solid #82d69a !important; outline-offset: 2px !important; box-shadow: 0 0 0 4px rgba(130,214,154,0.35) !important; }
     `;
-    document.head.appendChild(st);
+    appendToHead(st);
   }
 
   function sanitizeClasses(classes) {

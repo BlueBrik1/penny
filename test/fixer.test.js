@@ -82,3 +82,20 @@ test('accept-edits: apply only accepted ids, and honor an override value', () =>
   assert.match(fixed, /padding: 16px/);          // accepted drift applied
   assert.match(fixed, /background: #ff6a34/);      // non-accepted drift untouched
 });
+
+test('applyPlan replaces full line when before matches even if find is stale', () => {
+  const line = '      className="text-[#aaaaaa] hover:opacity-90"';
+  const css2 = ['export function X() {', line, '}'].join('\n');
+  const fixed = applyPlan(css2, [{
+    id: 1,
+    edits: [{
+      line: 2,
+      before: line,
+      after: '      className="text-[#ffffff] hover:opacity-90"',
+      find: 'text-[#bbbbbb]',
+      replace: 'text-[#ffffff]',
+    }],
+  }], [1]);
+  assert.match(fixed, /#ffffff/);
+  assert.doesNotMatch(fixed, /#aaaaaa/);
+});

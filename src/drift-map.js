@@ -2,6 +2,7 @@
 
 import { highlightLocations, isTailwindClassFragment, normalizeSpotSelector } from './interactive.js';
 import { findPreviewElements, isColorLike } from './preview-find.js';
+import { appendToBody } from './preview-dom.js';
 
 const GENERIC_SKIP = new Set(['body', 'html', ':root']);
 const SEV_COLOR = { high: '#e5484d', medium: '#f5a623', low: '#4c9be8' };
@@ -78,7 +79,7 @@ export function renderSpotlightInIframe(doc, drift) {
   dim.id = SPOTLIGHT_DIM_ID;
   dim.setAttribute('aria-hidden', 'true');
   dim.style.cssText = 'position:fixed;inset:0;background:rgba(17,17,19,0.68);z-index:2147483645;pointer-events:none';
-  doc.body.appendChild(dim);
+  if (!appendToBody(doc, dim)) return;
   const layer = doc.createElement('div');
   layer.id = SPOTLIGHT_ID;
   layer.setAttribute('aria-hidden', 'true');
@@ -97,7 +98,7 @@ export function renderSpotlightInIframe(doc, drift) {
       layer.appendChild(box);
     }
   }
-  if (layer.childNodes.length) doc.body.appendChild(layer);
+  if (layer.childNodes.length) appendToBody(doc, layer);
 }
 
 export function clearMapInIframe(doc) {
@@ -128,7 +129,7 @@ export function renderMapInIframe(doc, markers) {
       layer.appendChild(badge);
     }
   }
-  if (layer.childNodes.length) doc.body.appendChild(layer);
+  if (layer.childNodes.length) appendToBody(doc, layer);
 }
 
 /** Scroll the preview document so the first highlighted drift element is centered. */

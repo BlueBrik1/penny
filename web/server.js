@@ -411,21 +411,21 @@ async function handleApi(req, res, url, body) {
       }));
     }
     const ids = Array.isArray(body.ids) ? body.ids : null;
-    const appliedIds = new Set(ids || plan.map((p) => p.id));
     const before = page.drifts.length;
-    writeSource(page, applyPlan(page.src, plan, ids));
-    page.drifts = page.drifts.map((d) => (
-      appliedIds.has(d.id) ? { ...d, applied: true, pickedElement: d.pickedElement } : d
-    ));
+    const fixedSrc = applyPlan(page.src, plan, ids);
+    const fixUnchanged = fixedSrc === page.src;
+    if (!fixUnchanged) writeSource(page, fixedSrc);
     refreshAnalysis();
-    for (const p of state.pages) {
-      if (p.id === page.id) continue;
-      await recomputePage(p);
+    if (!fixUnchanged) await recomputePage(page);
+    else {
+      // Drop drifts that were in the apply request even if the line didn't change (stale edit).
+      const appliedIds = new Set(ids || plan.map((p) => p.id));
+      page.drifts = page.drifts.filter((d) => !appliedIds.has(d.id)).map((d, i) => ({ ...d, id: i + 1 }));
     }
     pushHistory('fix', { pageId: page.id, pageName: page.name, ids: ids || plan.map((p) => p.id), before, after: page.drifts.length });
     recordScanDelta();
     broadcast();
-    return send(snapshot());
+    return send({ ...snapshot(), fixUnchanged });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/revert') {

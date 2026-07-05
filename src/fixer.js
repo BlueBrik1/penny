@@ -99,13 +99,36 @@ export function computeFixPlan(css, drifts) {
 // `override` replacement (accept-edits "edit" action). Returns the new CSS string.
 export function applyPlan(css, plan, acceptedIds = null) {
   const lines = css.split('\n');
+  let changed = false;
   for (const item of plan) {
     if (acceptedIds && !acceptedIds.includes(item.id)) continue;
     for (const e of item.edits) {
       const i = e.line - 1;
       if (i < 0 || i >= lines.length) continue;
-      lines[i] = lines[i].replace(e.find, e.override ?? e.replace);
+      const line = lines[i];
+      const after = e.override ?? e.after;
+      if (after != null && e.before != null && line === e.before) {
+        if (line !== after) {
+          lines[i] = after;
+          changed = true;
+        }
+        continue;
+      }
+      const find = e.find ?? '';
+      const replace = e.override ?? e.replace ?? after;
+      if (find && line.includes(find) && replace != null) {
+        const next = line.replace(find, replace);
+        if (next !== line) {
+          lines[i] = next;
+          changed = true;
+        }
+        continue;
+      }
+      if (after != null && line !== after && e.before != null && line.trim() === e.before.trim()) {
+        lines[i] = after;
+        changed = true;
+      }
     }
   }
-  return lines.join('\n');
+  return changed ? lines.join('\n') : css;
 }

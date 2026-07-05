@@ -1,5 +1,7 @@
 // Find and spotlight a picked preview element (non-tech mode → technical mode handoff).
 
+import { appendToBody } from './preview-dom.js';
+
 const PICKER_NOISE = /^penny-picker(?:-|$)/;
 
 function classNameOf(el) {
@@ -255,7 +257,7 @@ function paintSpotlightBox(doc, el) {
   dim.id = SPOTLIGHT_DIM_ID;
   dim.setAttribute('aria-hidden', 'true');
   dim.style.cssText = 'position:fixed;inset:0;background:rgba(17,17,19,0.68);z-index:2147483645;pointer-events:none';
-  doc.body.appendChild(dim);
+  if (!appendToBody(doc, dim)) return false;
 
   const layer = doc.createElement('div');
   layer.id = SPOTLIGHT_ID;
@@ -267,7 +269,10 @@ function paintSpotlightBox(doc, el) {
     border:3px solid #fff;border-radius:6px;box-sizing:border-box;pointer-events:none;
     box-shadow:0 0 0 1px rgba(0,0,0,0.15),0 0 0 6px rgba(255,255,255,0.92),0 0 28px 10px rgba(255,255,255,0.55),0 14px 40px rgba(0,0,0,0.35)`;
   layer.appendChild(box);
-  doc.body.appendChild(layer);
+  if (!appendToBody(doc, layer)) {
+    dim.remove();
+    return false;
+  }
   return true;
 }
 
