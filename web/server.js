@@ -29,6 +29,7 @@ import { chatCompletion, resolveLlmConfig } from '../src/llm.js';
 import { freePort } from '../src/free-port.js';
 import { startPreviewSidecar } from '../src/preview-sidecar.js';
 import { readBootCache, writeBootCache, hydratePagesFromCache, clearBootCache } from '../src/boot-cache.js';
+import { runCreativeChat, appendCreativeDrift } from '../src/creative-chat.js';
 
 const ROOT = PACKAGE_ROOT;
 const WEB = path.join(ROOT, 'web');
@@ -446,6 +447,40 @@ async function handleApi(req, res, url, body) {
     if (typeof body.driftIdx === 'number') state.session.focus.driftIdx = body.driftIdx;
     broadcast();
     return send(snapshot());
+  }
+
+  // Non-technical mode chat — plain language + optional drift/fix generation.
+  if (req.method === 'POST' && url.pathname === '/api/creative-chat') {
+    const page = state.pages.find((p) => p.id === body.pageId) || state.pages[0];
+    if (!page) return send({ error: 'page not found', pages: [] }, 404);
+    const cur = loadConfig();
+    try {
+      const { reply, drift } = await runCreativeChat({
+        page,
+        element: body.element || null,
+        message: body.message || '',
+        history: body.history || [],
+        panelTokens: state.tokens,
+        tokenMode: state.tokenMode,
+        figmaSummary: state.figmaBaseline ? `${state.figmaBaseline.length} Figma tokens` : null,
+        cfg: cur,
+        apiKey: CFG.apiKey,
+      });
+      let creativeDriftId = null;
+      if (drift) {
+        creativeDriftId = appendCreativeDrift(page, drift);
+        if (creativeDriftId) {
+          const driftIdx = page.drifts.findIndex((d) => d.id === creativeDriftId);
+          state.session.focus = { pageId: page.id, driftIdx: Math.max(0, driftIdx) };
+          pushHistory('creative-fix', { pageId: page.id, pageName: page.name, driftId: creativeDriftId });
+          recordScanDelta();
+        }
+      }
+      broadcast();
+      return send({ ...snapshot(), creativeReply: reply, creativeDriftId, creativePageId: page.id });
+    } catch (e) {
+      return send({ ...snapshot(), error: e.message, creativeReply: `Sorry — ${e.message}` }, 500);
+    }
   }
 
   // Agent chat for current drift.

@@ -1,4 +1,5 @@
 // CSS fix engine: turns drift findings into concrete line edits and applies them.
+import { lineHasPlaceholders } from './concrete-fix.js';
 // Pure and testable — the three UI fix modes (auto / plan / accept-edits) are just
 // different policies over computeFixPlan() + applyPlan().
 //
@@ -50,7 +51,7 @@ function editsForDrift(drift) {
       after: e.after,
       selector: e.selector,
       file: e.file,
-    })).filter((e) => e.before !== e.after);
+    })).filter((e) => e.before !== e.after && !lineHasPlaceholders(e.after) && !lineHasPlaceholders(e.replace));
   }
   if (!isFixable(drift)) return [];
   return drift.locations

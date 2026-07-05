@@ -70,6 +70,7 @@ export function finalizeDrift(d) {
     found,
     locations,
     elementName: d.elementName || locations[0]?.elementName || null,
+    highlight: d.highlight || locations[0]?.highlight || locations[0]?.selector || null,
   };
 }
 

@@ -43,3 +43,14 @@ test('mapTargetFromLocation resolves inline style colors for React JSX', () => {
   assert.equal(m.kind, 'styleContains');
   assert.equal(m.value, '#181818');
 });
+
+test('mapTargetFromLocation uses classContains for creative-chat Tailwind highlights', () => {
+  const m = mapTargetFromLocation({
+    selector: 'bg-[#ff7038]',
+    highlight: 'bg-[#ff7038]',
+    raw: '#ff7038',
+    syntax: { kind: 'css' },
+  });
+  assert.equal(m.kind, 'classContains');
+  assert.equal(m.value, 'bg-[#ff7038]');
+});

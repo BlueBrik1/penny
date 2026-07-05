@@ -7,6 +7,7 @@ import { enrichOffline } from './claude.js';
 import { finalizeDrift, hasRequiredDriftFields } from './drift-format.js';
 import { formatDismissedForPrompt } from './dismiss.js';
 import { chatCompletion, resolveLlmConfig, DEFAULT_DEPLOYMENT } from './llm.js';
+import { sanitizeCreativeEdit } from './concrete-fix.js';
 
 export const MODEL = DEFAULT_DEPLOYMENT;
 
@@ -23,6 +24,7 @@ Every drift MUST include ALL of these (no empty strings):
 - highlight: CSS selector OR exact Tailwind class substring to locate the element in preview
 - locations: [{ file, line, selector, prop, value, raw, elementName, highlight }] — line must match source
 - edits: [{ line, before, after, find, replace }] — concrete in-file code change (REQUIRED when fixable)
+- NEVER use placeholders in edits (no TOKEN_NAME, YOUR_TOKEN, [CANONICAL_VALUE]). Copy exact literals from TOKEN INVENTORY token.value.
 
 Do NOT include severity reasoning or "why high/medium/low" prose.
 Do NOT flag literals that exactly match expected.
@@ -98,7 +100,7 @@ function validateLocation(loc, usages, srcFile) {
   };
 }
 
-function normalizeDrift(d, srcFile, usages, lines) {
+function normalizeDrift(d, srcFile, usages, lines, panelTokens = []) {
   const locations = (d.locations || [])
     .map((l) => validateLocation(l, usages, srcFile))
     .filter(Boolean);
@@ -107,6 +109,35 @@ function normalizeDrift(d, srcFile, usages, lines) {
   const found = d.found?.length ? [...new Set(d.found)]
     : d.actualValues?.length ? [...new Set(d.actualValues)]
       : [...new Set(locations.map((l) => l.value))];
+
+  const editCtx = {
+    expected: d.expected ?? d.token?.value ?? null,
+    token: d.token || null,
+    panelTokens,
+    found,
+    type: d.type || 'color',
+    lines,
+  };
+
+  const aiEdits = (d.edits || []).map((e) => {
+    const line = Number(e.line);
+    if (line < 1 || line > lines.length) return null;
+    return sanitizeCreativeEdit({
+      line,
+      before: e.before,
+      after: e.after,
+      find: e.find,
+      replace: e.replace,
+      file: srcFile,
+    }, editCtx);
+  }).filter(Boolean).map((e) => ({
+    line: e.line,
+    before: e.before,
+    after: e.after,
+    find: e.find,
+    replace: e.replace,
+    file: srcFile,
+  }));
 
   const drift = finalizeDrift({
     category: d.category || 'value-drift',
@@ -121,17 +152,7 @@ function normalizeDrift(d, srcFile, usages, lines) {
     elementName: d.elementName || locations[0]?.elementName,
     locations,
     distance: d.distance ?? 0,
-    aiEdits: (d.edits || []).filter((e) => {
-      const i = Number(e.line) - 1;
-      return i >= 0 && i < lines.length && e.before != null && e.after != null;
-    }).map((e) => ({
-      line: Number(e.line),
-      before: e.before,
-      after: e.after,
-      find: e.find,
-      replace: e.replace,
-      file: srcFile,
-    })),
+    aiEdits,
   });
 
   return isRealDrift(drift) && hasRequiredDriftFields(drift) ? drift : null;
@@ -163,6 +184,15 @@ function mergeWithDiff(aiDrifts, diffDrifts, srcFile) {
   });
   return merged.map((d, i) => ({ id: i + 1, ...finalizeDrift(d) }));
 }
+
+/** Normalize a single AI drift payload against live source (creative chat, etc.). */
+export function normalizeDriftFromAi(d, srcFile, src, panelTokens = []) {
+  const usages = parseSource(src, srcFile);
+  const lines = src.split('\n');
+  return normalizeDrift(d, srcFile, usages, lines, panelTokens);
+}
+
+export { parseJsonObject };
 
 function driftSig(d) {
   return [d.category, d.type, d.token?.name || '', [...(d.actualValues || [])].sort().join('|')].join('::');
@@ -216,7 +246,7 @@ export async function analyzePageWithAI({
     const text = await callModel({ client, cfg, apiKey, userContent });
     const parsed = parseJsonObject(text);
     const aiDrifts = (parsed.drifts || [])
-      .map((d) => normalizeDrift(d, srcFile, usages, lines))
+      .map((d) => normalizeDrift(d, srcFile, usages, lines, panelTokens))
       .filter(Boolean);
     return mergeWithDiff(aiDrifts, rawDiff, srcFile);
   } catch {

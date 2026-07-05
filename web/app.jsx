@@ -2,9 +2,11 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'https:
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import {
   groupDrifts, spotlightSelectorsFromDrift, hasApplicableEdits, highlightLocations,
+  resolvePageForElement,
 } from '/shared/interactive.js';
 import { collectMapMarkers, renderMapInIframe, clearMapInIframe, scrollDriftIntoView, renderSpotlightInIframe, clearSpotlightInIframe, spotlightMarkersFromDrift } from '/shared/drift-map.js';
 import { buildPreviewDocument, previewSandbox, previewKindLabel, detectPreviewKind, buildPulseCss, PREVIEW_KIND } from '/shared/preview.js';
+import { normalizePickedElement, renderElementSpotlightInDoc, clearElementSpotlightInDoc, describePickedElement, resolvePickTarget } from '/shared/element-highlight.js';
 
 async function apiPost(path, body = {}) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -38,6 +40,7 @@ const api = {
   restore: () => apiPost('/api/restore'),
   config: (patch) => apiPost('/api/config', patch),
   focus: (pageId, driftIdx) => apiPost('/api/focus', { pageId, driftIdx }),
+  creativeChat: (pageId, message, element, history) => apiPost('/api/creative-chat', { pageId, message, element, history }),
 };
 
 const PAPER = '237,233,223';
@@ -47,6 +50,7 @@ const SEVCOLOR = { high: '#e5484d', medium: '#f5a623', low: '#4c9be8' };
 const CODE = { comment: '#6f6a60', string: '#b6c99a', color: '#cf9bd6', number: '#d3a06a', selector: '#dab26a', property: '#8fb7dc', value: '#b6c99a', punct: '#7d786e', plain: '#ede9df' };
 const DIFF = { rmBg: 'rgba(255,90,90,0.15)', rmFg: '#ff8a8a', addBg: 'rgba(96,196,128,0.15)', addFg: '#82d69a', appliedBg: 'rgba(96,196,128,0.35)', appliedBorder: '#82d69a' };
 const TUTORIAL_STORAGE = 'penny-tutorial-done';
+const SIMPLE_MODE_STORAGE = 'penny-simple-mode';
 
 const qs = () => new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
 const urlTutorial = () => qs().get('tutorial') === '1';
@@ -120,7 +124,7 @@ function countSeverities(drifts) {
   return c;
 }
 
-function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFigma, onTutorial, busy, driftScore, scanNudge, groupMode, onGroup, heatmapOn, onHeatmap, tokenCount, tokenMode, scanMode, aiLive, onCopyCli, onShortcuts }) {
+function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFigma, onTutorial, busy, driftScore, scanNudge, groupMode, onGroup, heatmapOn, onHeatmap, tokenCount, tokenMode, scanMode, aiLive, simpleMode, onToggleSimple }) {
   const sev = countSeverities(drifts);
   const ghost = { border: `1px solid ${paper(0.3)}`, color: paper(0.9) };
   const chip = (s) => ({
@@ -131,8 +135,11 @@ function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFig
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 w-full px-3 py-2 rounded-lg" style={{ border: `1px solid ${paper(0.12)}`, background: paper(0.03) }}>
       <img src="/logo.png" alt="penny" className="h-7 w-auto shrink-0 mr-1" style={{ mixBlendMode: 'screen' }} />
-      <button type="button" onClick={onCopyCli} className="text-[10px] px-2 py-0.5 rounded mono shrink-0" style={{ border: `1px solid ${paper(0.15)}`, color: paper(0.45) }} title="Copy CLI deep link">CLI</button>
-      <button type="button" onClick={onShortcuts} className="text-[10px] px-2 py-0.5 rounded shrink-0" style={{ border: `1px solid ${paper(0.15)}`, color: paper(0.45) }} title="Keyboard shortcuts">h</button>
+      <button type="button" onClick={onToggleSimple} className="text-[10px] px-2 py-0.5 rounded shrink-0" style={{
+        border: `1px solid ${simpleMode ? '#82d69a55' : paper(0.15)}`,
+        color: simpleMode ? '#82d69a' : paper(0.45),
+        background: simpleMode ? '#82d69a18' : 'transparent',
+      }} title="Non-technical mode — chat + click elements in preview">{simpleMode ? 'Non-tech on' : 'Non-tech'}</button>
       <span className="w-px h-5 shrink-0 mx-0.5" style={{ background: paper(0.15) }} aria-hidden="true" />
       <span className="text-sm font-medium shrink-0" style={{ color: paper(0.85) }}>{drifts.length} drift{drifts.length !== 1 ? 's' : ''}</span>
       <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{ background: paper(0.06), color: paper(0.7) }} title="Token adherence">{driftScore ?? '—'}% aligned</span>
@@ -144,7 +151,7 @@ function SummaryBar({ drifts, sevFilter, onFilter, onRescan, onHardRescan, onFig
           style={chip(s)}>{sev[s]} {s}</button>
       ))}
       <span className="flex-1 min-w-[8px]" />
-      <span className="inline-flex items-center gap-2 shrink-0">
+      <span className="inline-flex items-center gap-2 shrink-0" style={{ opacity: simpleMode ? 0.35 : 1, pointerEvents: simpleMode ? 'none' : 'auto' }}>
         <button data-tutorial="group" onClick={onGroup} className="px-2 py-1 rounded text-xs" style={{ ...ghost, opacity: groupMode ? 1 : 0.55 }}>Group {groupMode ? 'on' : 'off'}</button>
         <button data-tutorial="map" onClick={onHeatmap} className="px-2 py-1 rounded text-xs" style={{ ...ghost, opacity: heatmapOn ? 1 : 0.55 }}>Map {heatmapOn ? 'on' : 'off'}</button>
       </span>
@@ -382,6 +389,51 @@ function SpotlightOverlay({ iframeRef, drift, visible, contentKey, usePostMessag
   return null;
 }
 
+/** Spotlight the exact element picked in non-tech mode (not drift markers). */
+function ElementHighlightOverlay({ iframeRef, element, visible, contentKey, usePostMessage }) {
+  useEffect(() => {
+    const clear = () => {
+      if (!usePostMessage) {
+        const doc = iframeDoc(iframeRef.current);
+        if (doc) clearElementSpotlightInDoc(doc);
+      }
+      try {
+        iframeWin(iframeRef.current)?.postMessage({ type: 'penny-highlight-element', element: null }, '*');
+      } catch { /* ignore */ }
+    };
+    if (!visible || !element) {
+      clear();
+      return undefined;
+    }
+    const render = () => {
+      if (usePostMessage) {
+        iframeWin(iframeRef.current)?.postMessage({ type: 'penny-highlight-element', element }, '*');
+        return;
+      }
+      const doc = iframeDoc(iframeRef.current);
+      if (doc?.body) renderElementSpotlightInDoc(doc, element);
+      else iframeWin(iframeRef.current)?.postMessage({ type: 'penny-highlight-element', element }, '*');
+    };
+    render();
+    const timers = [80, 250, 600, 1200, 2500].map((ms) => setTimeout(render, ms));
+    const poll = setInterval(render, 1500);
+    const iframe = iframeRef.current;
+    iframe?.addEventListener('load', render);
+    const win = iframeWin(iframe);
+    try { win?.addEventListener('scroll', render, true); } catch { /* cross-origin */ }
+    window.addEventListener('resize', render);
+    return () => {
+      timers.forEach(clearTimeout);
+      clearInterval(poll);
+      iframe?.removeEventListener('load', render);
+      try { win?.removeEventListener('scroll', render, true); } catch { /* cross-origin */ }
+      window.removeEventListener('resize', render);
+      clear();
+    };
+  }, [visible, element, contentKey, iframeRef, usePostMessage]);
+  return null;
+}
+
 function DriftMapOverlay({ iframeRef, markers, visible, contentKey, usePostMessage }) {
   useEffect(() => {
     const clear = () => {
@@ -423,10 +475,209 @@ function DriftMapOverlay({ iframeRef, markers, visible, contentKey, usePostMessa
   return null;
 }
 
-function RenderedWindow({ iframeRef, page, highlightDrift, mapOn, pulseSelectors, refreshKey }) {
+const PICKER_HOVER = 'penny-picker-hover';
+const PICKER_SELECTED = 'penny-picker-selected';
+
+function ElementPickerOverlay({ iframeRef, enabled, selected, onSelect, usePostMessage, contentKey }) {
+  useEffect(() => {
+    if (!enabled) {
+      if (usePostMessage) {
+        try { iframeWin(iframeRef.current)?.postMessage({ type: 'penny-picker', enabled: false }, '*'); } catch { /* ignore */ }
+      }
+      return undefined;
+    }
+
+    if (usePostMessage) {
+      const onMsg = (e) => {
+        if (e.data?.type === 'penny-element-picked' && e.data.element) onSelect(e.data.element);
+      };
+      window.addEventListener('message', onMsg);
+      const send = () => {
+        try {
+          iframeWin(iframeRef.current)?.postMessage({
+            type: 'penny-picker',
+            enabled: true,
+            selectedSelector: selected?.selector || null,
+          }, '*');
+        } catch { /* ignore */ }
+      };
+      send();
+      const iframe = iframeRef.current;
+      iframe?.addEventListener('load', send);
+      return () => {
+        window.removeEventListener('message', onMsg);
+        iframe?.removeEventListener('load', send);
+        try { iframeWin(iframeRef.current)?.postMessage({ type: 'penny-picker', enabled: false }, '*'); } catch { /* ignore */ }
+      };
+    }
+
+    const doc = iframeDoc(iframeRef.current);
+    if (!doc) return undefined;
+
+    let hoverEl = null;
+    let selectedEl = null;
+    const styleId = 'penny-picker-style-inline';
+    if (!doc.getElementById(styleId)) {
+      const st = doc.createElement('style');
+      st.id = styleId;
+      st.textContent = `
+        .${PICKER_HOVER} { outline: 2px solid #4c9be8 !important; outline-offset: 2px !important; cursor: crosshair !important; }
+        .${PICKER_SELECTED} { outline: 3px solid #82d69a !important; outline-offset: 2px !important; box-shadow: 0 0 0 4px rgba(130,214,154,0.35) !important; }
+      `;
+      doc.head.appendChild(st);
+    }
+
+    const setHover = (el) => {
+      if (hoverEl && hoverEl !== el) hoverEl.classList.remove(PICKER_HOVER);
+      hoverEl = el;
+      if (hoverEl && hoverEl !== selectedEl) hoverEl.classList.add(PICKER_HOVER);
+    };
+    const setSelected = (el) => {
+      if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
+      selectedEl = el;
+      if (selectedEl) {
+        selectedEl.classList.add(PICKER_SELECTED);
+        if (hoverEl === selectedEl) hoverEl.classList.remove(PICKER_HOVER);
+      }
+    };
+
+    const targetFromEvent = (e) => {
+      let el = e.target;
+      while (el && el !== doc.documentElement) {
+        if (el.nodeType === 1 && el.id !== styleId) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    if (selected?.selector) {
+      try {
+        const el = doc.querySelector(selected.selector);
+        if (el) setSelected(el);
+      } catch { /* ignore */ }
+    }
+
+    const onMove = (e) => {
+      const el = resolvePickTarget(targetFromEvent(e));
+      if (el && el !== selectedEl) setHover(el);
+    };
+    const onClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = resolvePickTarget(targetFromEvent(e));
+      if (!el) return;
+      onSelect(describePickedElement(el));
+      setSelected(el);
+      setHover(null);
+    };
+
+    doc.documentElement.style.cursor = 'crosshair';
+    doc.addEventListener('mousemove', onMove, true);
+    doc.addEventListener('click', onClick, true);
+
+    const iframe = iframeRef.current;
+    iframe?.addEventListener('load', () => { /* re-bind on load handled by effect deps */ });
+
+    return () => {
+      doc.documentElement.style.cursor = '';
+      doc.removeEventListener('mousemove', onMove, true);
+      doc.removeEventListener('click', onClick, true);
+      if (hoverEl) hoverEl.classList.remove(PICKER_HOVER);
+      if (selectedEl) selectedEl.classList.remove(PICKER_SELECTED);
+      doc.getElementById(styleId)?.remove();
+    };
+  }, [enabled, selected?.selector, onSelect, usePostMessage, contentKey, iframeRef]);
+
+  return null;
+}
+
+function MicIcon({ active }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill={active ? 'currentColor' : 'none'} />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+    </svg>
+  );
+}
+
+function CreativeChatPanel({ messages, input, onInput, onSend, busy, selectedElement, onClearElement, onListen, listening, deepLink }) {
+  const endRef = useRef(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, busy]);
+
+  const ghost = { border: `1px solid ${paper(0.25)}`, color: paper(0.85) };
+  const primary = { background: paper(1), color: '#111' };
+
+  return (
+    <div className="flex flex-col h-full min-h-0 rounded-xl overflow-hidden" style={{ border: `1px solid ${paper(0.14)}` }}>
+      <div className="px-3 py-2 shrink-0 text-[11px]" style={{ borderBottom: `1px solid ${paper(0.1)}`, color: paper(0.5) }}>
+        Non-technical mode · hover & click any element in the preview (optional)
+      </div>
+      {selectedElement && (
+        <div className="px-3 py-2 shrink-0 flex items-center gap-2 flex-wrap" style={{ borderBottom: `1px solid ${paper(0.08)}`, background: paper(0.04) }}>
+          <span className="text-[10px] uppercase tracking-wide" style={{ color: paper(0.45) }}>Selected</span>
+          <code className="mono text-[11px] px-2 py-0.5 rounded" style={{ background: paper(0.08), color: paper(0.85) }}>
+            {selectedElement.elementName || selectedElement.tag}{selectedElement.text ? ` · “${selectedElement.text.slice(0, 40)}”` : ''}
+          </code>
+          <button type="button" onClick={onClearElement} className="text-[10px] ml-auto px-2 py-0.5 rounded" style={ghost}>Clear</button>
+        </div>
+      )}
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3">
+        {messages.length === 0 && (
+          <p className="text-sm leading-relaxed" style={{ color: paper(0.5) }}>
+            Ask Penny about anything that feels off — e.g. “this button feels too small” or “the colors don’t match our brand.”
+            Click an element in the preview to focus the conversation.
+          </p>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className="max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap"
+              style={{
+                background: m.role === 'user' ? paper(0.12) : paper(0.06),
+                color: paper(m.role === 'user' ? 0.92 : 0.78),
+                border: `1px solid ${paper(m.role === 'user' ? 0.18 : 0.1)}`,
+              }}>
+              {m.content}
+              {m.driftId && (
+                <div className="mt-2 pt-2 text-[11px]" style={{ borderTop: `1px solid ${paper(0.12)}`, color: '#82d69a' }}>
+                  Fix ready — turn off <strong>Non-tech</strong> for Technical mode to review & apply, or use CLI: <code className="mono">{deepLink || 'penny view'}</code>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="text-xs" style={{ color: paper(0.45) }}>Penny is thinking…</div>
+        )}
+        <div ref={endRef} />
+      </div>
+      <div className="shrink-0 p-3 flex gap-2 items-end" style={{ borderTop: `1px solid ${paper(0.1)}`, background: paper(0.03) }}>
+        <textarea
+          value={input}
+          onChange={(e) => onInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
+          placeholder="Describe what feels off…"
+          rows={2}
+          className="flex-1 text-sm px-3 py-2 rounded-lg resize-none bg-transparent outline-none"
+          style={{ border: `1px solid ${paper(0.2)}`, color: paper(0.9) }}
+          disabled={busy}
+        />
+        <button type="button" onClick={onListen} disabled={busy} title="Speech to text"
+          className="p-2 rounded-lg disabled:opacity-40"
+          style={{ ...ghost, color: listening ? '#e5484d' : paper(0.7) }}>
+          <MicIcon active={listening} />
+        </button>
+        <button type="button" onClick={onSend} disabled={busy || !input.trim()} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-40" style={primary}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RenderedWindow({ iframeRef, page, highlightDrift, mapOn, pulseSelectors, refreshKey, simpleMode }) {
   const spotSelectors = useMemo(
-    () => (mapOn ? [] : spotlightSelectorsFromDrift(highlightDrift)),
-    [highlightDrift, mapOn],
+    () => (simpleMode || mapOn ? [] : spotlightSelectorsFromDrift(highlightDrift)),
+    [highlightDrift, mapOn, simpleMode],
   );
   const previewKind = useMemo(
     () => page.previewKind || detectPreviewKind(page.src, page.srcFile, page.html || ''),
@@ -853,6 +1104,20 @@ function App() {
   const [previewRefresh, setPreviewRefresh] = useState(0);
   const bumpPreview = () => setPreviewRefresh((n) => n + 1);
   const prevDriftCount = useRef(null);
+  const [simpleMode, setSimpleMode] = useState(() => localStorage.getItem(SIMPLE_MODE_STORAGE) === '1');
+  const [pickedElement, setPickedElement] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [lastCreativeFix, setLastCreativeFix] = useState(null);
+  const speechRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem(SIMPLE_MODE_STORAGE, simpleMode ? '1' : '0');
+    if (!simpleMode) setPickedElement(null);
+    if (simpleMode) setLocalFocus(true);
+  }, [simpleMode]);
 
   useEffect(() => {
     api.state().then((snap) => {
@@ -881,6 +1146,10 @@ function App() {
 
   const pages = d?.pages ?? [];
   const active = pages.find((p) => p.id === activeId) || pages[0] || null;
+  useEffect(() => {
+    setChatMessages([]);
+    if (!simpleMode) setPickedElement(null);
+  }, [active?.id, simpleMode]);
   useEffect(() => { setCur(0); setSevFilter(null); setAppliedLines({}); setApplying(false); setInlineEdits({}); }, [active?.id]);
 
   let rawDrifts = active?.drifts ?? [];
@@ -934,6 +1203,29 @@ function App() {
   const mapMarkers = useMemo(() => collectMapMarkers(mapDrifts), [mapDrifts]);
   const previewContentKey = `${active?.id ?? ''}-${active?.src?.length ?? 0}-${heatmapOn}-${previewRefresh}`;
 
+  /** Persisted on creative drifts — highlight whenever that drift is selected in tech mode. */
+  const creativeHighlightElement = useMemo(() => {
+    if (simpleMode) return null;
+    if (drift?.pickedElement) return drift.pickedElement;
+    const fix = lastCreativeFix;
+    if (!fix?.element || fix.pageId !== active?.id || fix.driftId !== drift?.id) return null;
+    return fix.element;
+  }, [simpleMode, drift?.pickedElement, drift?.id, lastCreativeFix, active?.id]);
+
+  const useCreativeHighlight = !!creativeHighlightElement;
+
+  useEffect(() => {
+    if (!simpleMode) return undefined;
+    const clear = () => {
+      const doc = iframeDoc(previewIframeRef.current);
+      if (doc) clearElementSpotlightInDoc(doc);
+      try {
+        iframeWin(previewIframeRef.current)?.postMessage({ type: 'penny-highlight-element', element: null }, '*');
+      } catch { /* ignore */ }
+    };
+    clear();
+    return undefined;
+  }, [simpleMode, previewRefresh]);
   const spotSelectors = useMemo(() => spotlightSelectorsFromDrift(drift), [drift]);
 
   useEffect(() => {
@@ -1034,7 +1326,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (tutorialActive || figmaOpen || shortcutsOpen || searchOpen) return;
+    if (simpleMode || tutorialActive || figmaOpen || shortcutsOpen || searchOpen) return;
     const h = (e) => {
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -1127,11 +1419,105 @@ function App() {
     flash(`Jumped to ${h.action} on ${h.pageName || h.pageId}`);
   };
 
-  const copyCliLink = async () => {
-    const cmd = d?.deepLink?.cli || 'penny view';
-    try { await navigator.clipboard.writeText(cmd); flash('CLI command copied.'); }
-    catch { flash(cmd); }
+  const toggleSimpleMode = () => {
+    if (simpleMode && lastCreativeFix) {
+      const { pageId, driftId } = lastCreativeFix;
+      const pg = pages.find((p) => p.id === pageId);
+      const di = pg?.drifts?.findIndex((x) => x.id === driftId) ?? -1;
+      if (di >= 0) {
+        setGroupMode(false);
+        setHeatmapOn(false);
+        setActiveId(pageId);
+        setCur(di);
+        setLocalFocus(true);
+        api.focus(pageId, di);
+        flash('Technical mode — review and apply your fix.');
+      }
+    }
+    setSimpleMode((v) => !v);
   };
+
+  const onPickElement = useCallback((el) => {
+    setLastCreativeFix(null);
+    const enriched = normalizePickedElement(el);
+    const pageId = resolvePageForElement(pages, enriched, active?.id);
+    const withPage = { ...enriched, pageId };
+    if (pageId && pageId !== activeId) {
+      setActiveId(pageId);
+      const name = pages.find((p) => p.id === pageId)?.name;
+      flash(`Selected ${enriched.elementName}${name ? ` · ${name}` : ''}`);
+    } else {
+      flash(`Selected ${enriched.elementName}`);
+    }
+    setPickedElement(withPage);
+  }, [pages, active?.id, activeId]);
+
+  const sendCreativeChat = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatBusy || !active) return;
+    setChatInput('');
+    const userMsg = { role: 'user', content: msg };
+    const history = [...chatMessages, userMsg].slice(-8);
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatBusy(true);
+    const elementSnap = pickedElement
+      ? normalizePickedElement({ ...pickedElement, classes: [...(pickedElement.classes || [])] })
+      : null;
+    const targetPageId = elementSnap?.pageId || resolvePageForElement(pages, elementSnap, active.id);
+    if (targetPageId !== active.id) setActiveId(targetPageId);
+    try {
+      const snap = await api.creativeChat(targetPageId, msg, elementSnap, history);
+      setD(snap);
+      const reply = snap.creativeReply || 'Done.';
+      const driftId = snap.creativeDriftId ?? null;
+      const pageId = snap.creativePageId || targetPageId;
+      if (driftId && elementSnap) {
+        setLastCreativeFix({ pageId, driftId, element: { ...elementSnap, pageId } });
+        setActiveId(pageId);
+        const pg = snap.pages?.find((p) => p.id === pageId);
+        const di = pg?.drifts?.findIndex((x) => x.id === driftId) ?? -1;
+        if (di >= 0) setCur(di);
+        api.focus(pageId, di >= 0 ? di : 0);
+      }
+      setChatMessages((prev) => [...prev, { role: 'assistant', content: reply, driftId, pageId }]);
+      if (driftId) flash('Fix generated — switch to Technical mode to apply.');
+    } catch (e) {
+      setChatMessages((prev) => [...prev, { role: 'assistant', content: e.message || 'Request failed.' }]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { flash('Speech recognition not supported in this browser'); return; }
+    if (listening && speechRef.current) {
+      speechRef.current.stop();
+      return;
+    }
+    const rec = new SR();
+    speechRef.current = rec;
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = 'en-US';
+    setListening(true);
+    rec.onresult = (e) => {
+      const text = e.results[0]?.[0]?.transcript || '';
+      if (text) setChatInput((prev) => (prev ? `${prev} ${text}` : text));
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    rec.start();
+  };
+
+  const creativeDeepLink = useMemo(() => {
+    if (!lastCreativeFix) return d?.deepLink?.cli || 'penny view';
+    const { pageId, driftId } = lastCreativeFix;
+    const pg = pages.find((p) => p.id === pageId);
+    const di = pg?.drifts?.findIndex((x) => x.id === driftId) ?? -1;
+    if (di < 0) return d?.deepLink?.cli || 'penny view';
+    return `penny view --page=${encodeURIComponent(pageId)} --drift=${di}`;
+  }, [lastCreativeFix, pages, d?.deepLink?.cli]);
   const finishTutorial = async () => {
     setTutorialActive(false);
     setGroupMode(false);
@@ -1200,7 +1586,7 @@ function App() {
 
   const scanOverlay = busy && scanMode ? <ScanOverlay mode={scanMode} aiLive={d?.aiLive} /> : null;
 
-  if (d.ready && totalDrifts === 0) {
+  if (d.ready && totalDrifts === 0 && !simpleMode) {
     return (
       <>
         {scanOverlay}
@@ -1231,7 +1617,7 @@ function App() {
           heatmapOn={heatmapOn} onHeatmap={() => setHeatmapOn((v) => !v)}
           tokenCount={d.tokens?.length ?? 0} tokenMode={d.tokenMode} scanMode={d.scanMode}
           aiLive={d.aiLive}
-          onCopyCli={copyCliLink} onShortcuts={() => setShortcutsOpen(true)}
+          simpleMode={simpleMode} onToggleSimple={toggleSimpleMode}
         />
       </div>
       <FigmaModal frame={d.frame} open={figmaOpen} onClose={() => setFigmaOpen(false)} />
@@ -1241,7 +1627,7 @@ function App() {
         <div className="flex flex-col min-w-0 min-h-0 shrink-0 sync-now" data-tutorial="preview" style={{ width: '50%', borderRight: `1px solid ${paper(0.14)}`, ...panelSyncStyle('preview', sync, drift) }}>
           <div className="flex shrink-0 flex-wrap items-center w-full" style={{ borderBottom: `1px solid ${paper(0.1)}`, background: paper(0.03) }}>
             {pages.map((p) => (
-              <button key={p.id} onClick={() => setActiveId(p.id)} className="px-4 py-2.5 text-xs"
+              <button key={p.id} onClick={() => { if (simpleMode) setPickedElement(null); setActiveId(p.id); }} className="px-4 py-2.5 text-xs"
                 style={p.id === active.id ? { background: paper(0.1), color: paper(0.95), borderBottom: `2px solid ${paper(0.9)}` } : { color: paper(0.5) }}>
                 {p.name}{(p.drifts?.length ?? 0) > 0 && ` (${p.drifts.length})`}{p.dirty && <span style={{ color: '#82d69a' }}> ●</span>}
               </button>
@@ -1254,12 +1640,22 @@ function App() {
             </div>
           </div>
           <div className="flex-1 min-h-0 w-full bg-white relative">
-            <RenderedWindow iframeRef={previewIframeRef} page={active} highlightDrift={drift} mapOn={heatmapOn} pulseSelectors={pulseSelectors} refreshKey={previewRefresh} />
-            <SpotlightOverlay iframeRef={previewIframeRef} drift={drift} visible={!heatmapOn && !!drift && !!active.previewUrl} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
-            <DriftMapOverlay iframeRef={previewIframeRef} markers={mapMarkers} visible={heatmapOn} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
-            {heatmapOn && <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(17,17,17,0.7)', color: paper(0.8) }}>Drift map</span>}
+            <RenderedWindow iframeRef={previewIframeRef} page={active} highlightDrift={useCreativeHighlight ? null : drift} mapOn={simpleMode ? false : heatmapOn} pulseSelectors={simpleMode ? new Set() : pulseSelectors} refreshKey={previewRefresh} simpleMode={simpleMode} />
+            {useCreativeHighlight ? (
+              <ElementHighlightOverlay iframeRef={previewIframeRef} element={creativeHighlightElement} visible contentKey={`${previewContentKey}-creative-${lastCreativeFix?.driftId}`} usePostMessage={!!active.previewUrl} />
+            ) : !simpleMode && (
+              <>
+                <SpotlightOverlay iframeRef={previewIframeRef} drift={drift} visible={!heatmapOn && !!drift && !!active.previewUrl} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
+                <DriftMapOverlay iframeRef={previewIframeRef} markers={mapMarkers} visible={heatmapOn} contentKey={previewContentKey} usePostMessage={!!active.previewUrl} />
+              </>
+            )}
+            <ElementPickerOverlay iframeRef={previewIframeRef} enabled={simpleMode} selected={pickedElement} onSelect={onPickElement} usePostMessage={!!active.previewUrl} contentKey={previewContentKey} />
+            {simpleMode && (
+              <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(17,17,17,0.7)', color: paper(0.85) }}>Click an element</span>
+            )}
+            {!simpleMode && heatmapOn && <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded z-10" style={{ background: 'rgba(17,17,17,0.7)', color: paper(0.8) }}>Drift map</span>}
           </div>
-          {elementChips.length > 0 && (
+          {!simpleMode && elementChips.length > 0 && (
             <div className="px-4 py-2 flex flex-wrap gap-1 shrink-0 w-full" style={{ borderTop: `1px solid ${paper(0.1)}`, background: paper(0.03) }}>
               <span className="text-[10px] self-center mr-1" style={{ color: paper(0.4) }}>Affected:</span>
               {elementChips.map((s) => (
@@ -1274,7 +1670,23 @@ function App() {
           )}
         </div>
 
-        {/* RIGHT HALF: two columns, locked to viewport height */}
+        {/* RIGHT HALF: technical panels or simple-mode chat */}
+        {simpleMode ? (
+          <div className="min-w-0 min-h-0 p-2 h-full overflow-hidden" style={{ width: '50%' }}>
+            <CreativeChatPanel
+              messages={chatMessages}
+              input={chatInput}
+              onInput={setChatInput}
+              onSend={sendCreativeChat}
+              busy={chatBusy}
+              selectedElement={pickedElement}
+              onClearElement={() => setPickedElement(null)}
+              onListen={startListening}
+              listening={listening}
+              deepLink={creativeDeepLink}
+            />
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-2 min-w-0 min-h-0 p-2 h-full overflow-hidden" style={{ width: '50%' }}>
           <div className="flex flex-col gap-2 min-h-0 h-full overflow-hidden">
             <div data-tutorial="tokens" className="min-h-0 flex flex-col sync-now" style={{ flex: '1 1 0', minHeight: 210, display: 'flex', flexDirection: 'column', overflow: 'hidden', ...panelSyncStyle('tokens', sync, drift) }}>
@@ -1321,6 +1733,7 @@ function App() {
             </Win>
           </div>
         </div>
+        )}
       </div>
       {tutorialActive && (
         <TutorialOverlay step={tutorialStep} onNext={tutorialNext} onBack={tutorialBack} onSkip={finishTutorial} />

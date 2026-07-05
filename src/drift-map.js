@@ -1,6 +1,6 @@
 // Drift map — paint dashed overlays inside the preview iframe (same document as elements).
 
-import { highlightLocations, normalizeSpotSelector } from './interactive.js';
+import { highlightLocations, isTailwindClassFragment, normalizeSpotSelector } from './interactive.js';
 import { findPreviewElements, isColorLike } from './preview-find.js';
 
 const GENERIC_SKIP = new Set(['body', 'html', ':root']);
@@ -15,8 +15,12 @@ export function mapTargetFromLocation(loc) {
     const raw = loc.raw || loc.highlight || '';
     return raw ? { kind: 'classContains', value: raw } : null;
   }
-  const sel = normalizeSpotSelector(loc.highlight || loc.selector);
   const raw = loc.raw || loc.value || loc.highlight || '';
+  const hl = (loc.highlight || loc.selector || '').trim();
+  const twNeedle = isTailwindClassFragment(hl) ? hl : (isTailwindClassFragment(raw) ? raw : null);
+  if (twNeedle) return { kind: 'classContains', value: twNeedle.replace(/^\./, '') };
+
+  const sel = normalizeSpotSelector(hl);
   if (sel && !GENERIC_SKIP.has(sel) && !isColorLike(sel)) {
     return { kind: 'selector', value: sel };
   }

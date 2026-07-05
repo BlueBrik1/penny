@@ -1,6 +1,6 @@
 # Penny
 
-Penny is an interactive design-token drift coach for CSS and JSX. It scans your frontend source, finds inconsistent colors, spacing, and typography, and helps you fix them — with a terminal UI, a web dashboard, one-click applies, and optional Figma baselines.
+Penny is an interactive design-token drift coach for CSS and JSX. It scans your frontend source, finds inconsistent colors, spacing, and typography, and helps you fix them — with a terminal UI, a web dashboard, one-click applies, optional **Non-tech mode** (plain-language chat + click-to-select elements), and optional Figma baselines.
 
 Penny uses **Azure OpenAI** to explain each drift in plain language and suggest concrete line-level edits. Without a Figma file, it builds an **intrinsic token inventory** from your codebase and flags value drift, inconsistent usage, off-palette colors, and off-scale spacing.
 
@@ -62,7 +62,7 @@ penny --help
    penny view
    ```
 
-   Opens `http://127.0.0.1:5178` by default. First load runs AI analysis on each page (can take a few minutes).
+   Opens `http://127.0.0.1:5178` by default. First load runs AI analysis on each page (can take a few minutes). Use the **Non-tech** toggle in the summary bar for plain-language chat and click-to-select fixes (see [Non-tech mode](#non-tech-mode-creative-chat)).
 
 3. **Use the terminal UI** (syncs with the web app when it is running):
 
@@ -187,17 +187,47 @@ Supported source formats: plain CSS, SCSS, Tailwind class strings in JSX/TSX, in
 
 ## Web dashboard (`penny view`)
 
-The dashboard has five main areas:
+The dashboard has two modes:
 
-1. **Summary bar** — drift count, alignment score, severity filters, Group/Map toggles, rescan buttons, Figma embed, tutorial
+- **Technical mode** (default) — full drift workflow: tokens, problems, code, apply fixes
+- **Non-tech mode** — simplified UI for PMs, marketers, and founders: click elements in the preview and describe what feels wrong in plain language
+
+### Layout (technical mode)
+
+1. **Summary bar** — drift count, alignment score, **Non-tech** toggle, severity filters, Group/Map toggles, rescan buttons, Figma embed, tutorial
 2. **Live preview** — rendered page with spotlight and drift-map overlays
 3. **Problems panel** — step through drifts; comparison “cinema” for design vs shipped values
 4. **Token inventory** — every color/spacing/type value found; click to jump to related drifts
 5. **Source code** — syntax-highlighted file with drift markers and inline fix preview
 
+### Non-tech mode (creative chat)
+
+Toggle **Non-tech** in the summary bar. The right panel becomes a chat; the left stays a live preview of your app (usually via your dev server).
+
+| Step | What happens |
+|------|----------------|
+| 1. Click an element | Penny selects the **whole component** (button, link, nav item — not an inner text node). It resolves which source **page tab** owns that class. |
+| 2. Describe the issue | Type or use **speech-to-text** (browser mic). Example: “This button color is too dark.” |
+| 3. Get a fix | Azure OpenAI returns a plain-language reply plus a line-level drift/fix when possible. |
+| 4. Apply in Technical mode | Turn off **Non-tech**. Penny jumps to the correct page and drift, **highlights the element you picked**, and shows the before/after edit. Click **Fix this** to apply. |
+
+**Element context sent to the model** includes tag, classes, visible text, href (for links), computed color/size from the browser, and the matching **source line + snippet** from your file — so fixes target the right JSX/CSS line.
+
+**Fix quality guardrails:**
+
+- Edits must be **valid source code** — no placeholders like `TOKEN_NAME` or `[CANONICAL_VALUE]`
+- Preview-only classes (`penny-picker-*`) are never written into your files
+- JSX structure is preserved (e.g. `<Link to="…">` is not removed — only `className` / color values change)
+- If the model suggests a placeholder, Penny resolves it to a **concrete hex/px** from your token inventory before showing Apply
+- Fixes align with what you said (color vs size vs spacing)
+
+Creative drifts store `pickedElement` on the drift record so **highlighting persists** when you leave and return to that problem in Technical mode.
+
+Non-tech mode does **not** show the white spotlight overlay (so you can keep picking elements). Spotlight appears only after you switch back to Technical mode.
+
 ### Web keyboard shortcuts
 
-Press **h** in the summary bar or anywhere (when not typing in an input):
+Press **h** anywhere when not typing in an input (there is no shortcuts button in the bar — keyboard only):
 
 | Key | Action |
 |-----|--------|
@@ -213,15 +243,17 @@ Press **h** in the summary bar or anywhere (when not typing in an input):
 
 ### Web actions (buttons)
 
+- **Non-tech** — toggle creative chat + element picker vs full technical panels
 - **Rescan** — re-run analysis from disk (keeps dismissals)
 - **Hard rescan** — wipe dismissals + boot cache, fresh AI pass
-- **Fix this / Fix group / Apply all** — write edits to source files
+- **Fix this / Fix group / Apply all** — write edits to source files (Technical mode)
 - **Ask agent** — copy a structured prompt to clipboard
 - **Dismiss** — hide this suggestion for this page + element (AI will not re-suggest similar issues there)
 - **Restore dismissed** — undo all dismissals
 - **Revert page / Revert all** — restore original file contents from before fixes
-- **CLI** — copy a `penny view --page=… --drift=…` deep link
 - **Tutorial** — guided tour of the dashboard
+
+Deep links for the CLI still work: `penny view --page=<id> --drift=<n>`. In Non-tech mode, the chat panel shows the matching command after a creative fix.
 
 ### Live preview modes
 
@@ -232,7 +264,7 @@ Press **h** in the summary bar or anywhere (when not typing in an input):
 | Standalone JSX (Tailwind) | Babel + Tailwind CDN sandbox, or dev-server proxy if configured |
 | Multi-import JSX | Proxies through `previewDevServer` (set during onboarding) |
 
-Set `previewDevServer` in config (e.g. `http://localhost:5173`) and run your dev server so React pages render with real routing and imports.
+Set `previewDevServer` in config (e.g. `http://localhost:5173`) and run your dev server so React pages render with real routing and imports. **Non-tech element picking** and **creative-fix highlighting** in Technical mode rely on `web/penny-bridge.js` injected into proxied dev-server HTML (postMessage for picker + spotlight).
 
 ---
 
@@ -287,9 +319,9 @@ Set during onboarding or by editing `scanMode` in `~/.driftrc`:
 
 | Mode | Behavior |
 |------|----------|
-| `ondemand` | Rescan only when you click Rescan or run `penny scan` |
-| `agent` | Hook runs `penny scan --quiet` after each AI agent turn |
-| `watch` | Rescan on file save (can be expensive) |
+| `ondemand` | Rescan only when you click Rescan or run `penny scan` — **agent hooks and file-watch rescans do not run** |
+| `agent` | Hook runs `penny scan --quiet` after each AI agent turn (only when `scanMode` is `agent`) |
+| `watch` | Rescan on file save (web server re-reads config before each watch-triggered scan) |
 | `interval` | Rescan every N minutes (`intervalMinutes`) |
 | `autonomous` | Watch + auto-apply all fixable drifts |
 
@@ -358,9 +390,13 @@ First scan runs AI on every page and can take several minutes. Results are cache
 src/
   cli.js              CLI entry (`penny` command)
   tui.js              Terminal UI
-  config.js           ~/.driftrc read/write + onboarding
+  config.js           ~/.driftrc read/write + onboarding + scan-mode helpers
   pipeline.js         Multi-page scan orchestration
-  ai-analyze.js       Azure OpenAI drift analysis
+  ai-analyze.js       Azure OpenAI drift analysis (scanner)
+  creative-chat.js    Non-tech mode chat + creative drift generation
+  concrete-fix.js     Reject/resolve placeholder AI edits → concrete literals
+  element-highlight.js Element picker descriptors, find-in-preview, spotlight
+  interactive.js      Grouping, spotlight selectors, page resolution for picks
   scan.js             `penny scan` + local scan helpers
   fixer.js            Line-level fix plans and apply
   dismiss.js          Per-element dismissal tracking
@@ -371,11 +407,11 @@ src/
   figma.js            Figma API + export parsing
   boot-cache.js       Shared scan cache
 web/
-  server.js           HTTP API + SSE (`penny view`)
-  app.jsx             React dashboard
-  penny-bridge.js     postMessage bridge for preview iframes
+  server.js           HTTP API + SSE + `/api/creative-chat`
+  app.jsx             React dashboard (technical + non-tech modes)
+  penny-bridge.js     postMessage bridge: picker, spotlight, drift map
 hooks/
-  penny-scan.js       Agent hook entrypoint
+  penny-scan.js       Agent hook entrypoint (respects scanMode)
 test/
   fixtures/           Sample CSS/JSX/HTML for unit tests
 ```
@@ -402,9 +438,13 @@ Tests use fixtures in `test/fixtures/` — not bundled demo data.
 | “No sources to scan” | Re-run onboarding; point at your frontend root |
 | Empty CLI with garbled text | Fixed in recent builds; ensure Windows CRLF sources load via disk sync |
 | React preview blank | Set `previewDevServer` and run `npm run dev` |
-| Drift map missing on React dev server | Ensure dev server is running; map uses `penny-bridge.js` postMessage |
+| Drift map / picker missing on React dev server | Ensure dev server is running; bridge uses `penny-bridge.js` postMessage |
+| Non-tech pick selects wrong page tab | Click the component again; Penny matches classes to source files. Multi-route apps share one dev-server URL — page tabs are **source files**, not routes |
+| Creative highlight missing in Technical mode | Generate a **new** creative fix (older drifts may lack stored `pickedElement`). Ensure you turn off Non-tech to see spotlight |
+| Unexpected rescans in on-demand mode | Confirm `scanMode` is `ondemand` in `~/.driftrc`; hooks no-op unless mode is `agent` |
 | Slow first load | Normal — AI analyzes each page once; cache speeds up later runs |
 | CLI not syncing with web | Start `penny view` first, then `penny` in another terminal on port 5178 |
+| Apply would break syntax (`TOKEN_NAME`, etc.) | Should be blocked automatically; regenerate the fix or hard-rescan if you see an old creative drift |
 
 ---
 

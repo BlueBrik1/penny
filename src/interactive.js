@@ -56,6 +56,15 @@ export function sortDriftsBySeverity(drifts) {
 
 const GENERIC_SPOT_SKIP = new Set(['body', 'html', ':root']);
 
+/** Tailwind utility substring — not valid for querySelector (e.g. bg-[#ff7038]). */
+export function isTailwindClassFragment(value) {
+  const s = String(value || '').trim();
+  if (!s || /\s|[>,+~]/.test(s)) return false;
+  if (/^\./.test(s) || /^#[a-z]/i.test(s)) return false;
+  if (/\[/.test(s)) return true;
+  return /^(?:bg|text|border|ring|outline|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|space|rounded|font|flex|grid|w|h|top|left|right|bottom|z|opacity|shadow|items|justify|self|place|content|order|grow|shrink|basis|col|row|max|min|aspect|object|overflow|pointer|cursor|select|transition|duration|ease|scale|rotate|translate|skew|origin|backdrop|divide|from|via|to|fill|stroke|decoration|tracking|leading|line|list|table|break|whitespace|indent|align|hyphens)-/.test(s);
+}
+
 export function normalizeSpotSelector(selector) {
   return (selector || '').replace(/:{1,2}[a-z-]+(\([^)]*\))?/g, '').trim();
 }
@@ -74,6 +83,11 @@ function addSpotTarget(out, loc) {
   if (loc.syntax?.kind === 'tw-arb' || loc.syntax?.kind === 'tw-space') {
     const raw = loc.raw || loc.highlight || '';
     if (raw) out.add(raw);
+    return;
+  }
+  const tw = loc.highlight || loc.raw || loc.selector || '';
+  if (isTailwindClassFragment(tw)) {
+    out.add(String(tw).replace(/^\./, ''));
     return;
   }
   const sel = normalizeSpotSelector(loc.highlight || loc.selector);
@@ -134,4 +148,30 @@ export function webDeepLink({ pageId, driftIdx, port = 5178 }) {
   if (pageId) q.push(`page=${encodeURIComponent(pageId)}`);
   if (driftIdx != null) q.push(`drift=${driftIdx}`);
   return `http://localhost:${port}${q.length ? `?${q.join('&')}` : ''}`;
+}
+
+/** Pick which configured page owns a preview element (dev-server shows the whole app). Browser-safe. */
+export function resolvePageForElement(pages, element, fallbackId) {
+  if (!element || !pages?.length) return fallbackId;
+  const needles = [
+    element.highlight,
+    ...(element.classes || []).filter((c) => c.length > 3),
+  ].filter(Boolean);
+  if (!needles.length) return fallbackId;
+
+  let bestId = fallbackId;
+  let bestScore = 0;
+  for (const p of pages) {
+    const src = p.src || '';
+    let score = 0;
+    for (const n of needles) {
+      if (src.includes(n)) score += n.length + 10;
+    }
+    if (element.text?.length > 3 && src.includes(element.text.slice(0, 24).trim())) score += 8;
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = p.id;
+    }
+  }
+  return bestScore > 0 ? bestId : fallbackId;
 }
