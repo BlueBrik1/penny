@@ -2,6 +2,8 @@
 
 Penny is an interactive design-token drift coach for CSS and JSX. It scans your frontend source, finds inconsistent colors, spacing, and typography, and helps you fix them — with a terminal UI, a web dashboard, one-click applies, optional **Non-tech mode** (plain-language chat + click-to-select elements), and optional Figma baselines.
 
+**npm:** [`penny-design`](https://www.npmjs.com/package/penny-design) · **GitHub:** [BlueBrik1/penny](https://github.com/BlueBrik1/penny)
+
 ### How it finds drift (rules-first)
 
 Detection is **rule-based and deterministic** — a perceptual color/scale diff (`src/diff.js`) against a token baseline is the sole source of drifts and fixes. **Azure OpenAI is optional**: when a key is present it only *enriches* the plain-language copy (problem / solution / element label) over a small payload — it never re-discovers drifts. So Penny runs fully offline, and CI can gate on drift with zero LLM calls:
@@ -25,25 +27,41 @@ Baseline priority: **Figma** > committed **`tokensFile`** > **intrinsic** (a tok
 
 ## Installation
 
-Clone or download this repo, then install dependencies and link the CLI:
+### Option A — npm (recommended)
+
+Install globally from npm. The CLI command is `penny`:
 
 ```bash
-cd penny          # or your clone path
-npm install
-npm link          # installs the `penny` command globally
+npm install -g penny-design
+penny --help
 ```
 
-Alternatively, run without linking:
+Requires **Node.js 18+**. To upgrade later: `npm install -g penny-design@latest`.
+
+Run without a global install (e.g. in CI):
+
+```bash
+npx penny-design --help
+npx penny-design scan --local --no-ai --fail-on-drift
+```
+
+### Option B — clone from GitHub (development)
+
+For contributing or running from source:
+
+```bash
+git clone https://github.com/BlueBrik1/penny.git
+cd penny
+npm install
+npm link          # installs the `penny` command globally
+penny --help
+```
+
+Without linking, invoke the CLI directly:
 
 ```bash
 node src/cli.js
 node src/cli.js view
-```
-
-Verify:
-
-```bash
-penny --help
 ```
 
 ---
@@ -57,7 +75,7 @@ penny --help
    ```
 
    You will be prompted for:
-   - Azure OpenAI API key (required)
+   - Azure OpenAI API key *(optional — richer copy and `llm-full` scans)*
    - Optional Figma credentials
    - Which AI agent you use (for “Ask agent” prompts)
    - Scan frequency
@@ -70,7 +88,7 @@ penny --help
    penny view
    ```
 
-   Opens `http://127.0.0.1:5178` by default. First load runs AI analysis on each page (can take a few minutes). Use the **Non-tech** toggle in the summary bar for plain-language chat and click-to-select fixes (see [Non-tech mode](#non-tech-mode-creative-chat)).
+   Opens `http://127.0.0.1:5178` by default. First load scans each configured page (rules-first; usually seconds, longer on very large projects). A second start can load instantly from `~/.driftcache.json` if sources are unchanged. Use the **Non-tech** toggle in the summary bar for plain-language chat and click-to-select fixes (see [Non-tech mode](#non-tech-mode-creative-chat)).
 
 3. **Use the terminal UI** (syncs with the web app when it is running):
 
@@ -448,6 +466,8 @@ test/
 ---
 
 ## Development
+
+Clone the repo and install dependencies (see [Option B](#option-b--clone-from-github-development) above), then:
 
 ```bash
 npm test              # run unit tests (node --test)

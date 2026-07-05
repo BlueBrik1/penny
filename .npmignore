@@ -1,0 +1,7 @@
+test/
+.git/
+.cursor/
+.claude/
+prompts.md
+node_modules/
+*.log

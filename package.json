@@ -1,15 +1,43 @@
 {
-  "name": "token-drift-detector",
-  "version": "1.0.0",
+  "name": "penny-design",
+  "version": "0.1.0",
   "description": "Penny — interactive design-token drift coach for CSS and JSX.",
   "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "design-tokens",
+    "design-system",
+    "drift",
+    "css",
+    "tailwind",
+    "jsx",
+    "lint",
+    "figma"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlueBrik1/penny.git"
+  },
+  "bugs": "https://github.com/BlueBrik1/penny/issues",
+  "homepage": "https://github.com/BlueBrik1/penny#readme",
   "bin": {
     "penny": "src/cli.js"
   },
+  "files": [
+    "src",
+    "web",
+    "hooks",
+    "favicons",
+    "README.md"
+  ],
   "scripts": {
     "start": "node src/cli.js",
     "web": "node web/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "postcss": "^8.4.47"
