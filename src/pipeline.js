@@ -6,6 +6,7 @@ import { analyzePageWithAI } from './ai-analyze.js';
 import { isRealDrift } from './diff.js';
 import { isDismissed, dismissedItemsForPage } from './dismiss.js';
 import { resolveApiKey } from './demo-mode.js';
+import { resolveTokenFile } from './token-file.js';
 
 export { resolveApiKey };
 
@@ -28,6 +29,7 @@ export async function analyzePage({
   client,
   figmaSummary = null,
   cfg = {},
+  noAi = false,
 }) {
   const filterOut = (drifts) => drifts.filter((d) => isRealDrift(d) && !isDismissed(page.id, d, cfg));
 
@@ -40,10 +42,12 @@ export async function analyzePage({
     panelTokens,
     tokenMode,
     figmaSummary,
-    apiKey: apiKey || resolveApiKey(cfg),
+    apiKey: noAi ? '' : (apiKey || resolveApiKey(cfg)),
     cfg,
-    client,
+    client: noAi ? null : client,
     dismissedItems: dismissedItemsForPage(page.id, cfg.dismissedItems || []),
+    analysisMode: noAi ? 'rules' : (cfg.analysisMode || 'rules'),
+    enrichWithAi: noAi ? false : cfg.enrichWithAi,
   });
   return filterOut(drifts);
 }
@@ -56,16 +60,19 @@ export async function analyzeAllPages({
   opts = {},
 }) {
   const allUsages = pages.flatMap((p) => parseSource(p.src || p.text, p.srcFile || p.file));
-  const analysis = await analyzeUsages(allUsages, { figmaTokens: figmaBaseline });
+  // Baseline priority: Figma > committed tokensFile > intrinsic (derived from code).
+  const fileTokens = figmaBaseline ? null : resolveTokenFile(cfg);
+  const analysis = await analyzeUsages(allUsages, { figmaTokens: figmaBaseline || fileTokens });
   const panelTokens = analysis.panelTokens;
   const diffTokens = analysis.diffTokens;
-  const tokenMode = analysis.mode;
+  const tokenMode = fileTokens ? 'file' : analysis.mode;
 
   const apiKey = resolveApiKey(cfg);
   const figmaSummary = figmaBaseline
     ? `${figmaBaseline.length || 0} Figma tokens loaded`
     : null;
 
+  const noAi = !!opts.noAi;
   const results = [];
   for (const page of pages) {
     const drifts = await analyzePage({
@@ -77,6 +84,7 @@ export async function analyzeAllPages({
       client,
       figmaSummary,
       cfg,
+      noAi,
     });
     results.push({
       id: page.id,
@@ -87,5 +95,8 @@ export async function analyzeAllPages({
     });
   }
 
-  return { pages: results, panelTokens, diffTokens, tokenMode, aiLive: !!apiKey };
+  // aiLive reflects whether the LLM was actually invoked this scan (honest badge).
+  const aiLive = !noAi && !!apiKey && cfg.enrichWithAi !== false;
+  const analysisMode = noAi ? 'rules' : (cfg.analysisMode || 'rules');
+  return { pages: results, panelTokens, diffTokens, tokenMode, aiLive, analysisMode };
 }

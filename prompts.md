@@ -1,3 +1,2 @@
-1. Figma check
-2. Runthrough
-3. Publish to npm
+1. Runthrough
+2. Publish to npm

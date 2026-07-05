@@ -18,10 +18,11 @@ import { fileURLToPath } from 'node:url';
 import { parseFigmaExport, fetchFigmaTokens, fetchFigmaFrame } from '../src/figma.js';
 import { parseSource } from '../src/parse.js';
 import { analyzeUsages } from '../src/intrinsic.js';
+import { resolveTokenFile } from '../src/token-file.js';
 import { computeFixPlan, applyPlan } from '../src/fixer.js';
 import { appendDismissItem, dismissedCount, recordDismissItem } from '../src/dismiss.js';
 import { loadConfig, updateConfig, configExists, ensureProjectSources, shouldWatchScan, shouldIntervalScan } from '../src/config.js';
-import { computeDriftScore, deepLinkCmd, webDeepLink } from '../src/interactive.js';
+import { computeDriftScore, deepLinkCmd, webDeepLink, matchPageForElement } from '../src/interactive.js';
 import { analyzePage, resolveSourceDefs, resolveApiKey } from '../src/pipeline.js';
 import { detectPreviewKind, companionHtmlPath, langFromPreviewKind, resolvePreviewTarget } from '../src/preview.js';
 import { resolveSourcePath, PACKAGE_ROOT, projectRoot } from '../src/project-paths.js';
@@ -123,17 +124,20 @@ async function loadFigmaOptional() {
 }
 
 function refreshAnalysis() {
+  const cur = loadConfig();
   const allUsages = state.pages.flatMap((p) => parseSource(p.src, p.srcFile));
-  const analysis = analyzeUsages(allUsages, { figmaTokens: state.figmaBaseline });
+  const fileTokens = state.figmaBaseline ? null : resolveTokenFile(cur);
+  const analysis = analyzeUsages(allUsages, { figmaTokens: state.figmaBaseline || fileTokens });
   state.tokens = analysis.panelTokens;
   state.diffTokens = analysis.diffTokens;
-  state.tokenMode = analysis.mode;
+  state.tokenMode = fileTokens ? 'file' : analysis.mode;
 }
 
 // Resolve configured sources; excluded paths (substring match) are dropped before scanning.
 function sourceDefs() {
   const cur = loadConfig();
-  state.aiLive = !!resolveApiKey(cur);
+  // aiLive = the LLM was actually available this scan (key present AND enrichment not disabled).
+  state.aiLive = !!resolveApiKey(cur) && cur.enrichWithAi !== false;
   let defs = resolveSourceDefs(cur);
   const excl = cur.exclude || [];
   return { all: defs, excluded: excl, kept: defs.filter((d) => !excl.some((x) => x && d.src.includes(x))) };
@@ -278,7 +282,7 @@ function pageView(p) {
     id: p.id, name: p.name, srcFile: p.srcFile, lang: p.lang, previewKind: p.previewKind,
     previewUrl: p.previewUrl || null, previewImportWarning: !!p.previewImportWarning,
     readPath: p.readPath || null,
-    src: p.src, html: p.html, drifts: p.drifts,
+    src: p.src, html: p.html, drifts: p.drifts.filter((d) => !d.applied),
     plan: computeFixPlan(p.src, p.drifts), dirty: p.src !== p.original,
   };
 }
@@ -296,6 +300,7 @@ function snapshot() {
     live: state.live,
     demoMode: false,
     aiLive: state.aiLive,
+    analysisMode: cur.analysisMode || 'rules',
     scanMode: state.scanMode,
     tutorialComplete: !!cur.tutorialComplete,
     onboardingComplete: !!cur.onboardingComplete,
@@ -406,10 +411,17 @@ async function handleApi(req, res, url, body) {
       }));
     }
     const ids = Array.isArray(body.ids) ? body.ids : null;
+    const appliedIds = new Set(ids || plan.map((p) => p.id));
     const before = page.drifts.length;
     writeSource(page, applyPlan(page.src, plan, ids));
+    page.drifts = page.drifts.map((d) => (
+      appliedIds.has(d.id) ? { ...d, applied: true, pickedElement: d.pickedElement } : d
+    ));
     refreshAnalysis();
-    for (const p of state.pages) await recomputePage(p);
+    for (const p of state.pages) {
+      if (p.id === page.id) continue;
+      await recomputePage(p);
+    }
     pushHistory('fix', { pageId: page.id, pageName: page.name, ids: ids || plan.map((p) => p.id), before, after: page.drifts.length });
     recordScanDelta();
     broadcast();
@@ -418,7 +430,6 @@ async function handleApi(req, res, url, body) {
 
   if (req.method === 'POST' && url.pathname === '/api/revert') {
     const page = state.pages.find((p) => p.id === body.pageId) || state.pages[0];
-    page.original = fs.readFileSync(page.readPath, 'utf8');
     writeSource(page, page.original);
     refreshAnalysis();
     for (const p of state.pages) await recomputePage(p);
@@ -430,7 +441,6 @@ async function handleApi(req, res, url, body) {
 
   if (req.method === 'POST' && url.pathname === '/api/revert-all') {
     for (const page of state.pages) {
-      page.original = fs.readFileSync(page.readPath, 'utf8');
       if (page.src !== page.original) writeSource(page, page.original);
     }
     refreshAnalysis();
@@ -453,6 +463,16 @@ async function handleApi(req, res, url, body) {
   if (req.method === 'POST' && url.pathname === '/api/creative-chat') {
     const page = state.pages.find((p) => p.id === body.pageId) || state.pages[0];
     if (!page) return send({ error: 'page not found', pages: [] }, 404);
+    if (body.element) {
+      const { matched } = matchPageForElement(state.pages, body.element, page.id);
+      if (!matched) {
+        return send({
+          ...snapshot(),
+          creativeReply: 'Could not match this element to a source file — try clicking again or switch tabs manually.',
+          creativeDriftId: null,
+        });
+      }
+    }
     const cur = loadConfig();
     try {
       const { reply, drift } = await runCreativeChat({

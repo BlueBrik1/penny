@@ -2,14 +2,22 @@
 
 Penny is an interactive design-token drift coach for CSS and JSX. It scans your frontend source, finds inconsistent colors, spacing, and typography, and helps you fix them — with a terminal UI, a web dashboard, one-click applies, optional **Non-tech mode** (plain-language chat + click-to-select elements), and optional Figma baselines.
 
-Penny uses **Azure OpenAI** to explain each drift in plain language and suggest concrete line-level edits. Without a Figma file, it builds an **intrinsic token inventory** from your codebase and flags value drift, inconsistent usage, off-palette colors, and off-scale spacing.
+### How it finds drift (rules-first)
+
+Detection is **rule-based and deterministic** — a perceptual color/scale diff (`src/diff.js`) against a token baseline is the sole source of drifts and fixes. **Azure OpenAI is optional**: when a key is present it only *enriches* the plain-language copy (problem / solution / element label) over a small payload — it never re-discovers drifts. So Penny runs fully offline, and CI can gate on drift with zero LLM calls:
+
+```bash
+penny scan --local --no-ai --fail-on-drift
+```
+
+Baseline priority: **Figma** > committed **`tokensFile`** > **intrinsic** (a token inventory derived from your own code). Power users who want a full-file LLM scan can opt in with `"analysisMode": "llm-full"` in `~/.driftrc`.
 
 ---
 
 ## Requirements
 
 - **Node.js 18+**
-- **Azure OpenAI** API key (required for scans and AI explanations)
+- **Azure OpenAI** API key — *optional*; enables richer AI copy and `llm-full` scans. Scans, fixes, and CI work without it.
 - Your frontend project with `.css`, `.scss`, `.jsx`, `.tsx`, `.vue`, or `.svelte` files
 - For React/Vite live previews: a running dev server (e.g. `npm run dev` on port 3000 or 5173)
 
@@ -87,7 +95,10 @@ penny --help
 | `penny scan --quiet` | One-line summary (for agent hooks / CI) |
 | `penny scan --json` | Machine-readable scan output |
 | `penny scan --local` | Scan in-process, skip web dashboard |
-| `penny scan --hard` | Clear dismissals and rerun full AI analysis |
+| `penny scan --no-ai` | Rules-only scan; never call the LLM (implies `--local`) |
+| `penny scan --fail-on-drift` | Exit code **1** if any drift is found (CI gate) |
+| `penny scan --json --verbose-json` | Machine output including full per-page drift details |
+| `penny scan --hard` | Clear dismissals and rerun full analysis |
 | `penny scan --port <n>` | Web dashboard port (default **5178**) |
 | `penny onboarding` | (Re)run setup → `~/.driftrc` |
 | `penny hooks` | Show agent hook installation help |
@@ -122,6 +133,9 @@ All preferences persist in JSON at `~/.driftrc` (override path with `DRIFTRC` en
   "figmaUrl": "",
   "agent": "Claude Code",
   "scanMode": "ondemand",
+  "analysisMode": "rules",
+  "enrichWithAi": true,
+  "tokensFile": "",
   "intervalMinutes": 5,
   "projectRoot": "/path/to/frontend",
   "previewDevServer": "http://localhost:3000",
@@ -143,8 +157,23 @@ All preferences persist in JSON at `~/.driftrc` (override path with `DRIFTRC` en
 | `projectRoot` | Root folder; source paths are relative to this |
 | `previewDevServer` | URL of your Vite/CRA dev server for React iframe previews |
 | `scanMode` | When rescans run (see [Scan modes](#scan-modes)) |
+| `analysisMode` | `rules` (default — diff finds drift, LLM only enriches copy) or `llm-full` (full-file LLM scan) |
+| `enrichWithAi` | When a key is present, enrich drift copy via the LLM. `false` = offline copy only |
+| `tokensFile` | Path to a committed design-token JSON used as the diff baseline (below) |
 | `exclude` | Path substrings to skip during discovery |
 | `dismissedItems` | Per-page, per-element dismissals the AI must not repeat |
+
+#### Committed token file (`tokensFile`)
+
+Point `tokensFile` at a JSON file of canonical tokens to diff against instead of the intrinsic (code-derived) inventory. Figma, if configured, still takes precedence; an unreadable/empty file falls back to intrinsic with a warning.
+
+```json
+{
+  "colors": { "primary": "#ff6b35", "text": "#111111" },
+  "spacing": { "md": "16px", "lg": "24px" },
+  "typography": { "body": "16px" }
+}
+```
 
 Re-run `penny onboarding` anytime to change project folder, API key, or scan mode.
 
@@ -208,7 +237,7 @@ Toggle **Non-tech** in the summary bar. The right panel becomes a chat; the left
 |------|----------------|
 | 1. Click an element | Penny selects the **whole component** (button, link, nav item — not an inner text node). It resolves which source **page tab** owns that class. |
 | 2. Describe the issue | Type or use **speech-to-text** (browser mic). Example: “This button color is too dark.” |
-| 3. Get a fix | Azure OpenAI returns a plain-language reply plus a line-level drift/fix when possible. |
+| 3. Get a fix | Penny resolves the fix from your token inventory first (no LLM); if the complaint can't be mapped deterministically, it falls back to Azure OpenAI for a plain-language reply plus a line-level drift/fix. |
 | 4. Apply in Technical mode | Turn off **Non-tech**. Penny jumps to the correct page and drift, **highlights the element you picked**, and shows the before/after edit. Click **Fix this** to apply. |
 
 **Element context sent to the model** includes tag, classes, visible text, href (for links), computed color/size from the browser, and the matching **source line + snippet** from your file — so fixes target the right JSX/CSS line.
@@ -434,7 +463,7 @@ Tests use fixtures in `test/fixtures/` — not bundled demo data.
 
 | Issue | What to try |
 |-------|-------------|
-| “Azure OpenAI API key required” | Run `penny onboarding` |
+| “Azure OpenAI API key required” | Only the interactive browser needs a key. Run `penny onboarding`, or use `penny scan --no-ai` / `penny view` (rules-based) with no key |
 | “No sources to scan” | Re-run onboarding; point at your frontend root |
 | Empty CLI with garbled text | Fixed in recent builds; ensure Windows CRLF sources load via disk sync |
 | React preview blank | Set `previewDevServer` and run `npm run dev` |

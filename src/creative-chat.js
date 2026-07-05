@@ -9,7 +9,10 @@ import { isTailwindClassFragment } from './interactive.js';
 import {
   attachSourceContext, findLineForElement, isInvalidCreativeEdit, normalizePickedElement,
 } from './element-highlight.js';
-import { materializeReplace, resolveConcreteValue, sanitizeCreativeEdit } from './concrete-fix.js';
+import {
+  materializeReplace, resolveConcreteValue, sanitizeCreativeEdit, editMatchesComplaint,
+  inferComplaintProperty, inferEditProperty,
+} from './concrete-fix.js';
 
 const CREATIVE_SYSTEM = `You are Penny, a friendly design coach for non-technical users (marketers, PMs, founders).
 Explain design and consistency issues in plain language — avoid jargon like "selector" or "token" unless the user uses them first.
@@ -94,6 +97,7 @@ function enrichEdits(edits, src, element, ctx = {}) {
       { ...ctx, lines, found: ctx.found },
     );
     if (!sanitized) continue;
+    if (!editMatchesComplaint(sanitized, ctx.message || '')) continue;
     if (isInvalidCreativeEdit(sanitized.before, sanitized.after)) continue;
     out.push(sanitized);
   }
@@ -292,9 +296,70 @@ function buildPayload({ page, element, message, history, panelTokens, tokenMode,
   return parts.filter(Boolean).join('\n');
 }
 
+// Which drift type a source fragment represents (normalized to color|spacing|typography).
+function fragmentType(frag) {
+  const p = inferEditProperty({ find: frag, replace: frag, before: frag, after: frag });
+  return p === 'size' ? 'typography' : p;
+}
+
+// The literal/class on `line` to replace, matching the complaint type.
+function pickFragment(line, clean, driftType) {
+  const cands = [clean.highlight, ...(clean.classes || []), clean.selector].filter(Boolean);
+  const onLine = cands.find((c) => line.includes(c) && fragmentType(c) === driftType);
+  if (onLine) return onLine;
+  if (driftType === 'color') return line.match(/#[0-9a-fA-F]{3,8}/)?.[0] || null;
+  return line.match(/\d+px/)?.[0] || null;
+}
+
+function deterministicReply(clean, driftType, concrete) {
+  const what = driftType === 'color' ? 'color' : driftType === 'spacing' ? 'spacing' : 'text size';
+  const name = clean.elementName || clean.tag || 'element';
+  return `I matched the ${what} on the ${name} to ${concrete} from your design tokens.`
+    + '\n\nTurn off **Non-tech** to review and apply this fix in Technical mode, or use the CLI link below.';
+}
+
+/**
+ * Resolve a Non-tech fix from the token inventory alone — no LLM. Returns { reply, drift }
+ * when the picked element + complaint map cleanly to a design token, else null (LLM fallback).
+ */
+export function tryDeterministicCreativeFix({ page, element, message, panelTokens = [] }) {
+  if (!element) return null;
+  const type = inferComplaintProperty(message); // color | spacing | size | null
+  if (!type) return null; // ambiguous complaint — let the LLM interpret it
+  const driftType = type === 'size' ? 'typography' : type;
+
+  const clean = normalizePickedElement(element);
+  const line = findLineForElement(page.src, clean);
+  if (!line) return null;
+  const before = page.src.split('\n')[line - 1] || '';
+  const find = pickFragment(before, clean, driftType);
+  if (!find || !before.includes(find)) return null;
+
+  // normalizeCreativeDrift resolves the concrete token value + builds the edit deterministically.
+  // locations:[]/edits:[] routes through the lenient path, which resolves the concrete
+  // token value and materializes the edit deterministically.
+  const drift = normalizeCreativeDrift({
+    category: 'value-drift',
+    type: driftType,
+    severity: 'medium',
+    found: [find],
+    highlight: clean.highlight,
+    locations: [],
+    edits: [],
+  }, page.srcFile, page.src, clean, { panelTokens, message });
+
+  if (!drift?.aiEdits?.length) return null; // no resolvable token — fall through to LLM
+  const finalized = applyElementToDrift(drift, element);
+  return { reply: deterministicReply(clean, driftType, finalized.expected || find), drift: finalized };
+}
+
 export async function runCreativeChat({
   page, element, message, history = [], panelTokens, tokenMode, figmaSummary, cfg, apiKey,
 }) {
+  // Rules-first: try to resolve the fix from the token inventory before touching the LLM.
+  const deterministic = tryDeterministicCreativeFix({ page, element, message, panelTokens });
+  if (deterministic) return deterministic;
+
   const llmCfg = resolveLlmConfig(cfg || { azureOpenAiKey: apiKey });
   const key = apiKey || llmCfg.apiKey;
   if (!key) {

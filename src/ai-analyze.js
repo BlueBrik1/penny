@@ -3,11 +3,12 @@
 
 import { parseSource } from './parse.js';
 import { diff, isRealDrift } from './diff.js';
-import { enrichOffline } from './claude.js';
+import { enrichOffline, enrichDrifts } from './claude.js';
 import { finalizeDrift, hasRequiredDriftFields } from './drift-format.js';
 import { formatDismissedForPrompt } from './dismiss.js';
 import { chatCompletion, resolveLlmConfig, DEFAULT_DEPLOYMENT } from './llm.js';
 import { sanitizeCreativeEdit } from './concrete-fix.js';
+import { buildDeterministicEdits } from './fixer.js';
 
 export const MODEL = DEFAULT_DEPLOYMENT;
 
@@ -212,6 +213,25 @@ async function callModel({ client, cfg, apiKey, userContent }) {
   });
 }
 
+// Rank + id + decorate rule drifts, and attach deterministic in-file edits so the UI/CLI
+// can apply fixes with no LLM involvement.
+function prepareRuleDrifts(rawDiff, src) {
+  const decorated = rawDiff.map((d) => finalizeDrift({
+    ...d,
+    locations: d.locations.map((l) => ({ ...l, elementName: l.selector, highlight: l.selector || l.raw })),
+  }));
+  decorated.sort((a, b) => {
+    const rank = { high: 3, medium: 2, low: 1 };
+    const s = (rank[b.severity] || 0) - (rank[a.severity] || 0);
+    return s || b.locations.length - a.locations.length;
+  });
+  return decorated.map((d, i) => {
+    const withId = { id: i + 1, ...d };
+    const edits = buildDeterministicEdits(withId, src);
+    return edits.length ? { ...withId, aiEdits: edits, editsSource: 'rules' } : withId;
+  });
+}
+
 export async function analyzePageWithAI({
   pageId,
   srcFile,
@@ -225,18 +245,25 @@ export async function analyzePageWithAI({
   cfg,
   client,
   dismissedItems = [],
+  analysisMode = cfg?.analysisMode || 'rules',
+  enrichWithAi = cfg?.enrichWithAi,
 }) {
   const usages = parseSource(src, srcFile);
   const lines = src.split('\n');
   const rawDiff = diff(diffTokens, usages);
+  const hasKey = !!(apiKey || client?.complete || resolveLlmConfig(cfg).apiKey);
 
-  if (!apiKey && !client && !resolveLlmConfig(cfg).apiKey) {
-    const enriched = enrichOffline(rawDiff);
-    return enriched.map((d) => finalizeDrift({
-      ...d,
-      locations: d.locations.map((l) => ({ ...l, elementName: l.selector, highlight: l.selector || l.raw })),
-    }));
+  // Default (rules-first): diff() is the sole drift source. The LLM, when a key is present,
+  // only enriches problem/solution copy over a small payload — never re-discovers drifts.
+  if (analysisMode !== 'llm-full') {
+    const prepared = prepareRuleDrifts(rawDiff, src);
+    const offline = !hasKey || enrichWithAi === false;
+    const enriched = await enrichDrifts(prepared, { apiKey, cfg, client, offline });
+    return enriched.map((d) => finalizeDrift(d));
   }
+
+  // Opt-in full-file LLM scan for power users (analysisMode: 'llm-full').
+  if (!hasKey) return prepareRuleDrifts(rawDiff, src);
 
   const userContent = buildUserPayload({
     pageId, srcFile, src, html, tokens: panelTokens, tokenMode, figmaSummary, dismissedItems,
@@ -250,11 +277,7 @@ export async function analyzePageWithAI({
       .filter(Boolean);
     return mergeWithDiff(aiDrifts, rawDiff, srcFile);
   } catch {
-    const enriched = enrichOffline(rawDiff);
-    return enriched.map((d) => finalizeDrift({
-      ...d,
-      locations: d.locations.map((l) => ({ ...l, elementName: l.selector, highlight: l.selector || l.raw })),
-    }));
+    return prepareRuleDrifts(rawDiff, src);
   }
 }
 

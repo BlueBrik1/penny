@@ -4,11 +4,40 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { normalizeCreativeDrift } from '../src/creative-chat.js';
-import { resolvePageForElement } from '../src/interactive.js';
+import { normalizeCreativeDrift, tryDeterministicCreativeFix, runCreativeChat } from '../src/creative-chat.js';
+import { resolvePageForElement, matchPageForElement } from '../src/interactive.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const jsx = fs.readFileSync(path.join(root, 'test/fixtures/sample.jsx'), 'utf8');
+
+const BRAND = [{ name: 'color/primary', type: 'color', value: '#ff6b35', label: '#ff6b35' }];
+const page = { id: 'demo', name: 'Demo', srcFile: 'sample.jsx', src: jsx };
+const splinterEl = { tag: 'span', classes: ['rounded-lg', 'bg-[#ff7038]', 'px-3'], text: '#ff7038' };
+
+test('tryDeterministicCreativeFix resolves a color complaint from tokens with no LLM', () => {
+  const res = tryDeterministicCreativeFix({
+    page, element: splinterEl, message: 'this orange is the wrong color', panelTokens: BRAND,
+  });
+  assert.ok(res, 'expected a deterministic fix');
+  assert.ok(res.drift.aiEdits?.length, 'drift carries a concrete edit');
+  assert.match(res.drift.aiEdits[0].after, /#ff6b35/);
+  assert.doesNotMatch(res.reply, /Azure|OpenAI/i);
+});
+
+test('runCreativeChat returns the deterministic fix without a key', async () => {
+  // No apiKey/cfg: if this returned copy instead of a drift, the LLM path would have been hit.
+  const res = await runCreativeChat({
+    page, element: splinterEl, message: 'wrong color, use the brand orange', panelTokens: BRAND,
+  });
+  assert.ok(res.drift?.aiEdits?.length, 'fix resolved offline');
+});
+
+test('tryDeterministicCreativeFix returns null for an ambiguous complaint (LLM fallthrough)', () => {
+  const res = tryDeterministicCreativeFix({
+    page, element: splinterEl, message: 'make this look nicer please', panelTokens: BRAND,
+  });
+  assert.equal(res, null);
+});
 
 test('normalizeCreativeDrift accepts edits when strict parser misses the line', () => {
   const raw = {
@@ -102,4 +131,17 @@ test('resolvePageForElement picks the source file that contains the class', () =
     highlight: 'text-[#e8e5e0]',
   }, 'landing');
   assert.equal(id, 'navigation');
+});
+
+test('matchPageForElement reports unmatched when classes are absent from all sources', () => {
+  const pages = [
+    { id: 'landing', name: 'Landing', src: '.hero { color: blue; }' },
+    { id: 'navigation', name: 'Navigation', src: 'export function Nav() { return <nav />; }' },
+  ];
+  const { pageId, matched } = matchPageForElement(pages, {
+    classes: ['unknown-class-xyz'],
+    highlight: 'unknown-class-xyz',
+  }, 'landing');
+  assert.equal(pageId, 'landing');
+  assert.equal(matched, false);
 });

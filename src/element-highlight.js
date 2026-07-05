@@ -13,21 +13,29 @@ export function sanitizePickedClasses(classes) {
   return (classes || []).filter((c) => c && !PICKER_NOISE.test(c));
 }
 
-/** Walk up to the interactive / container element the user meant (button, link, nav, …). */
+/** Walk up to the interactive element the user meant (button, link, …). */
 export function resolvePickTarget(el) {
   if (!el || el.nodeType !== 1) return el;
-  const INTERACTIVE = new Set(['button', 'a', 'input', 'select', 'textarea', 'label', 'nav', 'header', 'footer', 'main', 'section', 'form', 'article', 'aside']);
-  const ROLES = new Set(['button', 'link', 'tab', 'menuitem', 'navigation']);
+  const PRIMARY = new Set(['button', 'a', 'input', 'select', 'textarea', 'label']);
+  const ROLE_PRIMARY = new Set(['button', 'link', 'tab', 'menuitem']);
+  const CONTAINER = new Set(['nav', 'header', 'footer', 'main', 'section', 'form', 'article', 'aside']);
+
   let cur = el;
-  let best = el;
   while (cur && cur.nodeType === 1 && cur.tagName?.toLowerCase() !== 'body') {
     const tag = cur.tagName.toLowerCase();
     const role = cur.getAttribute?.('role') || '';
-    if (INTERACTIVE.has(tag) || ROLES.has(role)) best = cur;
-    if (tag === 'a') best = cur;
+    if (PRIMARY.has(tag) || ROLE_PRIMARY.has(role)) return cur;
     cur = cur.parentElement;
   }
-  return best;
+
+  cur = el;
+  while (cur && cur.nodeType === 1 && cur.tagName?.toLowerCase() !== 'body') {
+    const tag = cur.tagName.toLowerCase();
+    const role = cur.getAttribute?.('role') || '';
+    if (CONTAINER.has(tag) || role === 'navigation') return cur;
+    cur = cur.parentElement;
+  }
+  return el;
 }
 
 export function computedStyleSummary(el) {

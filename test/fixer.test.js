@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { parseFigmaExport } from '../src/figma.js';
 import { parseCss } from '../src/css.js';
 import { diff } from '../src/diff.js';
-import { computeFixPlan, applyPlan, isFixable, hasApplicableEdits } from '../src/fixer.js';
+import { computeFixPlan, applyPlan, isFixable, hasApplicableEdits, buildDeterministicEdits } from '../src/fixer.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIX = join(root, 'test/fixtures');
@@ -32,6 +32,22 @@ test('hasApplicableEdits is false when before equals after', () => {
   for (const item of plan) assert.ok(hasApplicableEdits(item), item.token);
   const advisory = drifts.filter((d) => !isFixable(d));
   for (const d of advisory) assert.equal(plan.find((p) => p.id === d.id), undefined);
+});
+
+test('buildDeterministicEdits produces valid before/after with no LLM', () => {
+  const fixable = drifts.filter(isFixable);
+  assert.ok(fixable.length);
+  for (const d of fixable) {
+    const edits = buildDeterministicEdits(d, css);
+    assert.ok(edits.length, `expected edits for ${d.token?.name}`);
+    for (const e of edits) {
+      assert.notEqual(e.before, e.after);
+      assert.ok(css.split('\n')[e.line - 1].includes(e.find), 'find must exist on the line');
+    }
+  }
+  // Skips drifts that already carry aiEdits, and advisory (non-fixable) drifts.
+  assert.deepEqual(buildDeterministicEdits({ aiEdits: [{}], category: 'value-drift', locations: [] }, css), []);
+  assert.deepEqual(buildDeterministicEdits({ category: 'off-palette', locations: [] }, css), []);
 });
 
 test('plan produces real before/after line diffs', () => {

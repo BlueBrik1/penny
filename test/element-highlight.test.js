@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizePickedElement, findElementInDoc, isInvalidCreativeEdit, sanitizePickedClasses } from '../src/element-highlight.js';
+import { normalizePickedElement, findElementInDoc, isInvalidCreativeEdit, sanitizePickedClasses, resolvePickTarget } from '../src/element-highlight.js';
 
 test('normalizePickedElement picks a distinctive Tailwind class', () => {
   const el = normalizePickedElement({
@@ -35,6 +35,24 @@ test('isInvalidCreativeEdit rejects picker noise and Link removal', () => {
 
 test('sanitizePickedClasses removes preview UI classes', () => {
   assert.deepEqual(sanitizePickedClasses(['a', 'penny-picker-hover', 'b']), ['a', 'b']);
+});
+
+test('resolvePickTarget stops at button inside nav, not nav container', () => {
+  const body = { tagName: 'BODY', nodeType: 1, getAttribute: () => null, parentElement: null };
+  const nav = { tagName: 'NAV', nodeType: 1, getAttribute: () => null, parentElement: body };
+  const button = {
+    tagName: 'BUTTON',
+    nodeType: 1,
+    getAttribute: () => null,
+    parentElement: nav,
+  };
+  const span = {
+    tagName: 'SPAN',
+    nodeType: 1,
+    getAttribute: () => null,
+    parentElement: button,
+  };
+  assert.equal(resolvePickTarget(span), button);
 });
 
 test('findElementInDoc matches by highlight class and text', () => {

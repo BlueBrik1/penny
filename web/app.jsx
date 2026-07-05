@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'https:
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import {
   groupDrifts, spotlightSelectorsFromDrift, hasApplicableEdits, highlightLocations,
-  resolvePageForElement,
+  resolvePageForElement, matchPageForElement,
 } from '/shared/interactive.js';
 import { collectMapMarkers, renderMapInIframe, clearMapInIframe, scrollDriftIntoView, renderSpotlightInIframe, clearSpotlightInIframe, spotlightMarkersFromDrift } from '/shared/drift-map.js';
 import { buildPreviewDocument, previewSandbox, previewKindLabel, detectPreviewKind, buildPulseCss, PREVIEW_KIND } from '/shared/preview.js';
@@ -1463,8 +1463,19 @@ function App() {
     const elementSnap = pickedElement
       ? normalizePickedElement({ ...pickedElement, classes: [...(pickedElement.classes || [])] })
       : null;
-    const targetPageId = elementSnap?.pageId || resolvePageForElement(pages, elementSnap, active.id);
-    if (targetPageId !== active.id) setActiveId(targetPageId);
+    if (elementSnap) {
+      const { matched, pageId: matchedPageId } = matchPageForElement(pages, elementSnap, active.id);
+      if (!matched) {
+        setChatMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: 'Could not match this element to a source file — try clicking again or switch tabs manually.',
+        }]);
+        setChatBusy(false);
+        return;
+      }
+      if (matchedPageId !== active.id) setActiveId(matchedPageId);
+    }
+    const targetPageId = elementSnap?.pageId || matchPageForElement(pages, elementSnap, active.id).pageId;
     try {
       const snap = await api.creativeChat(targetPageId, msg, elementSnap, history);
       setD(snap);

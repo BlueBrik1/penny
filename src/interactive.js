@@ -151,13 +151,13 @@ export function webDeepLink({ pageId, driftIdx, port = 5178 }) {
 }
 
 /** Pick which configured page owns a preview element (dev-server shows the whole app). Browser-safe. */
-export function resolvePageForElement(pages, element, fallbackId) {
-  if (!element || !pages?.length) return fallbackId;
+export function matchPageForElement(pages, element, fallbackId) {
+  if (!element || !pages?.length) return { pageId: fallbackId, matched: false };
   const needles = [
     element.highlight,
     ...(element.classes || []).filter((c) => c.length > 3),
   ].filter(Boolean);
-  if (!needles.length) return fallbackId;
+  if (!needles.length) return { pageId: fallbackId, matched: false };
 
   let bestId = fallbackId;
   let bestScore = 0;
@@ -173,5 +173,9 @@ export function resolvePageForElement(pages, element, fallbackId) {
       bestId = p.id;
     }
   }
-  return bestScore > 0 ? bestId : fallbackId;
+  return { pageId: bestScore > 0 ? bestId : fallbackId, matched: bestScore > 0 };
+}
+
+export function resolvePageForElement(pages, element, fallbackId) {
+  return matchPageForElement(pages, element, fallbackId).pageId;
 }

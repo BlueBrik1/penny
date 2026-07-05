@@ -38,6 +38,9 @@ Scan options:
   --quiet                   Minimal output (hooks)
   --json                    Machine-readable output
   --local                   Skip web dashboard; scan in-process
+  --no-ai                   Rules-only scan; never call the LLM (implies --local)
+  --fail-on-drift           Exit 1 if any drift is found (CI gate)
+  --verbose-json            With --json, include full drift details per page
   --hard                    Hard rescan — clear dismissals, fresh AI analysis
   --port <n>                Web dashboard port (default 5178)
 
@@ -62,6 +65,8 @@ const { values: o, positionals } = parseArgs({
     drift: { type: 'string' }, page: { type: 'string' }, 'list-tokens': { type: 'boolean', default: false },
     quiet: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
     local: { type: 'boolean', default: false }, hard: { type: 'boolean', default: false }, port: { type: 'string' },
+    'no-ai': { type: 'boolean', default: false }, 'fail-on-drift': { type: 'boolean', default: false },
+    'verbose-json': { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
 });
@@ -75,28 +80,36 @@ async function cmdHooksTutorial(cfg) {
 }
 
 async function cmdScan(cfg) {
+  // --no-ai forces the in-process rules path (never hits the web server or LLM).
+  const noAi = o['no-ai'];
   const result = await runScan(cfg, {
     css: o.css,
-    local: o.local,
+    local: o.local || noAi,
     hard: o.hard,
     port: o.port,
     quiet: o.quiet,
+    noAi,
+    verboseJson: o['verbose-json'],
     'figma-export': o['figma-export'],
     'figma-file': o['figma-file'],
     'figma-token': o['figma-token'],
   });
+  const failing = o['fail-on-drift'] && result.total > 0;
   if (o.json) {
     console.log(JSON.stringify(result));
+    if (failing) process.exit(1);
     return;
   }
   if (o.quiet) {
     const extra = result.message ? ` · ${result.message}` : '';
     const tag = result.hard ? ' · hard' : '';
     console.log(`penny: ${result.total} drift${result.total !== 1 ? 's' : ''}${extra}${tag} (${result.via})`);
+    if (failing) process.exit(1);
     return;
   }
   console.log(`Scan complete (${result.via})`);
   for (const line of formatScanLines(result)) console.log(line);
+  if (failing) process.exit(1);
 }
 
 function openBrowser(url) {
@@ -138,8 +151,9 @@ async function openWeb(extraQuery = '') {
 async function main() {
   if (o.help) { console.log(HELP); return; }
 
-  const onboardingCmd = ['init', 'login', 'onboard', 'onboarding'].includes(positionals[0]);
-  if (!onboardingCmd && positionals[0] !== 'hooks' && !hasApiKey(loadConfig())) {
+  // Scans run rule-based with no key; only interactive/onboarding needs credentials.
+  const keyOptionalCmd = ['init', 'login', 'onboard', 'onboarding', 'hooks', 'scan'].includes(positionals[0]);
+  if (!keyOptionalCmd && !hasApiKey(loadConfig())) {
     console.error('\x1b[31mAzure OpenAI API key required.\x1b[0m Run \x1b[1mpenny onboarding\x1b[0m to set up.\n');
     process.exit(1);
   }

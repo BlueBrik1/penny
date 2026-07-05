@@ -46,12 +46,12 @@ async function resolveFigmaBaseline(cfg, overrides = {}) {
 export async function runLocalScan(cfg, opts = {}) {
   const sources = loadSourcePages(cfg, opts.css || null);
   if (!sources.length) {
-    return { via: 'local', total: 0, delta: null, message: null, driftScore: 100, bySeverity: { high: 0, medium: 0, low: 0 }, tokenMode: 'intrinsic', tokenCount: 0, pages: [], aiLive: false };
+    return { via: 'rules', total: 0, delta: null, message: null, driftScore: 100, bySeverity: { high: 0, medium: 0, low: 0 }, tokenMode: 'intrinsic', tokenCount: 0, pages: [], aiLive: false, analysisMode: 'rules' };
   }
   for (const s of sources) s.text = fs.readFileSync(s.path, 'utf8'), s.src = s.text;
 
   const figmaBaseline = await resolveFigmaBaseline(cfg, opts);
-  const { pages, panelTokens, tokenMode, aiLive } = await analyzeAllPages({
+  const { pages, panelTokens, tokenMode, aiLive, analysisMode } = await analyzeAllPages({
     pages: sources,
     cfg,
     figmaBaseline,
@@ -77,7 +77,7 @@ export async function runLocalScan(cfg, opts = {}) {
   if (!opts.dryRun && !opts.hard) updateConfig({ lastScanDriftCount: total });
 
   return {
-    via: aiLive ? 'ai' : 'local',
+    via: aiLive ? 'ai' : 'rules',
     hard: !!opts.hard,
     total,
     delta,
@@ -87,7 +87,8 @@ export async function runLocalScan(cfg, opts = {}) {
     tokenMode,
     tokenCount: panelTokens.length,
     aiLive,
-    pages: pages.map((p) => ({ id: p.id, name: p.name, file: p.file, driftCount: p.driftCount })),
+    analysisMode,
+    pages: pages.map((p) => ({ id: p.id, name: p.name, file: p.file, driftCount: p.driftCount, drifts: opts.verboseJson ? p.drifts : undefined })),
   };
 }
 

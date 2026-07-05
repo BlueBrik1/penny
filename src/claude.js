@@ -3,8 +3,8 @@
 import { chatCompletion, createLlmClient, resolveLlmConfig, DEFAULT_DEPLOYMENT } from './llm.js';
 import { finalizeDrift, offlineCopy } from './drift-format.js';
 
-const SYSTEM = `You enrich design-token drift findings. For each item return problem and solution (required, non-empty).
-Reply with ONLY JSON array: [{"id":N,"problem":"...","solution":"..."}]`;
+const SYSTEM = `You enrich design-token drift findings. For each item return problem and solution (required, non-empty), and optionally elementName (a short human label for the UI element, e.g. "Primary CTA button").
+Reply with ONLY JSON array: [{"id":N,"problem":"...","solution":"...","elementName":"..."}]`;
 
 function toPayload(drifts) {
   return drifts.map((d) => ({
@@ -40,10 +40,19 @@ function mergeResponse(drifts, text) {
   const byId = new Map(parseJsonArray(text).map((r) => [r.id, r]));
   return drifts.map((d) => {
     const r = byId.get(d.id);
-    const extra = r
-      ? { problem: r.problem || r.why, solution: r.solution || r.fix }
-      : offlineCopy(d);
-    return finalizeDrift({ ...d, ...extra, severity: r?.severity || d.severity });
+    if (!r) return finalizeDrift({ ...d, ...offlineCopy(d) });
+    const elementName = r.elementName || d.elementName;
+    const locations = r.elementName
+      ? d.locations.map((l) => ({ ...l, elementName: r.elementName }))
+      : d.locations;
+    return finalizeDrift({
+      ...d,
+      problem: r.problem || r.why,
+      solution: r.solution || r.fix,
+      severity: r.severity || d.severity,
+      elementName,
+      locations,
+    });
   });
 }
 

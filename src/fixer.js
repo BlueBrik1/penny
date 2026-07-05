@@ -40,6 +40,25 @@ export function renderCanonical(loc, drift) {
   return canonical; // plain CSS
 }
 
+// Deterministic before/after edits for a fixable drift, resolved against `src`.
+// Same rule the fix engine already uses (locations + renderCanonical), but with the
+// before/after lines materialized so the drift can carry them in `aiEdits` for the UI.
+export function buildDeterministicEdits(drift, src) {
+  if (drift.aiEdits?.length || !isFixable(drift)) return [];
+  const lines = src.split('\n');
+  return (drift.locations || [])
+    .map((l) => {
+      const find = l.raw ?? l.value;
+      const replace = renderCanonical(l, drift);
+      if (find === replace) return null;
+      const before = lines[l.line - 1] ?? '';
+      const after = before.replace(find, replace);
+      if (before === after) return null;
+      return { line: l.line, find, replace, before, after, selector: l.selector, file: l.file };
+    })
+    .filter(Boolean);
+}
+
 // Build the per-location edits for one drift: prefer AI-provided edits, else deterministic.
 function editsForDrift(drift) {
   if (drift.aiEdits?.length) {
@@ -64,6 +83,7 @@ export function computeFixPlan(css, drifts) {
   const lines = css.split('\n');
   const plan = [];
   for (const d of drifts) {
+    if (d.applied) continue;
     const edits = editsForDrift(d).map((e) => {
       if (e.before != null && e.after != null) return { ...e };
       const before = lines[e.line - 1] ?? '';

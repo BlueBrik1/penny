@@ -36,6 +36,9 @@ const DEFAULTS = {
   agent: 'Claude Code',
   scanMode: 'ondemand',
   intervalMinutes: 5,
+  analysisMode: 'rules', // 'rules' (diff-first, LLM enriches copy) | 'llm-full' (full-file LLM scan)
+  enrichWithAi: true, // when a key is present, enrich drift copy via the LLM
+  tokensFile: '', // optional committed design-token JSON used as the diff baseline
   exclude: [],
   projectRoot: '',
   sources: [], // empty -> auto-discover during onboarding or ensureProjectSources
