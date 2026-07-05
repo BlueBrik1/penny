@@ -233,21 +233,12 @@ function SetupGate() {
 function InitialLoading() {
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#111111' }}>
-      <div className="relative mb-10 flex items-center justify-center" style={{ width: 96, height: 96 }}>
-        <span className="absolute inset-0 rounded-full scan-ring" style={{ border: `2px solid ${paper(0.22)}` }} />
-        <span className="absolute inset-3 rounded-full scan-ring" style={{ border: `1px solid ${paper(0.12)}`, animationDelay: '0.55s' }} />
-        <span className="absolute inset-6 rounded-full loading-orbit" style={{ border: `1px dashed ${paper(0.08)}` }} />
-        <img src="/logo.png" alt="" className="h-12 w-auto scan-pulse relative z-10" style={{ mixBlendMode: 'screen' }} />
-      </div>
       <h1 className="text-2xl font-semibold mb-2 text-center tracking-tight" style={{ color: paper(0.95) }}>
         Loading<span className="loading-dots">...</span>
       </h1>
-      <p className="text-sm text-center max-w-md leading-relaxed mb-8" style={{ color: paper(0.48) }}>
+      <p className="text-sm text-center max-w-md leading-relaxed" style={{ color: paper(0.48) }}>
         Warming up your dashboard — this can take up to 5 minutes on first load while Penny scans your sources and runs AI analysis.
       </p>
-      <div className="w-80 h-1.5 rounded-full overflow-hidden" style={{ background: paper(0.07) }}>
-        <div className="h-full w-1/3 rounded-full scan-bar" style={{ background: paper(0.72) }} />
-      </div>
     </div>
   );
 }
